@@ -1,0 +1,2 @@
+bucket = "YOUR_TERRAFORM_STATE_BUCKET"
+prefix = "YOUR_SERVICE_NAME/prod"

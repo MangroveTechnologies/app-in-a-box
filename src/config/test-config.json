@@ -1,0 +1,12 @@
+{
+  "DB_HOST": "localhost",
+  "DB_NAME": "app_test_db",
+  "DB_USER": "postgres",
+  "DB_PASSWORD": "postgres",
+  "DB_PORT": "5432",
+  "DB_SSLMODE": "disable",
+  "CLOUD_SQL_CONNECTION_NAME": "",
+  "AUTH_ENABLED": true,
+  "API_KEYS": "test-key-1,test-key-2",
+  "REDIS_URL": "redis://localhost:6379/0"
+}

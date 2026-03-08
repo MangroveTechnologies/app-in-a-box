@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# gcp-app-template bootstrap script (non-interactive, agent-friendly)
+# x402-app-template bootstrap script (non-interactive, agent-friendly)
 # Usage: ./init.sh --name my-service --gcp-project my-gcp-project [--region us-central1]
 
 NAME=""
@@ -34,13 +34,13 @@ find . -type f \( -name "*.py" -o -name "*.json" -o -name "*.yaml" -o -name "*.y
   -exec sed -i "s/YOUR_TERRAFORM_STATE_BUCKET/${GCP_PROJECT}-terraform-state/g" {} +
 
 # Update pyproject.toml project name
-sed -i "s/gcp-app-template/$NAME/g" pyproject.toml
+sed -i "s/x402-app-template/$NAME/g" pyproject.toml
 
 # Update FastAPI title
-sed -i "s/GCP App Template/$NAME/g" src/app.py
+sed -i "s/x402 App Template/$NAME/g" src/app.py
 
 # Update MCP server name
-sed -i "s/gcp-app-template/$NAME/g" src/mcp/server.py
+sed -i "s/x402-app-template/$NAME/g" src/mcp/server.py
 
 echo ""
 echo "Done. Files updated with:"

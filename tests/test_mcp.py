@@ -7,7 +7,7 @@ from src.mcp.server import create_mcp_server
 
 def test_mcp_server_creates_successfully():
     server = create_mcp_server()
-    assert server.name == "gcp-app-template"
+    assert server.name == "x402-app-template"
 
 
 def test_mcp_server_is_singleton():

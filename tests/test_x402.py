@@ -35,5 +35,10 @@ def test_payment_requirements_structure():
 def test_easter_egg_config_values():
     assert EASTER_EGG_PRICE == "50000"
     assert PAY_TO == "0xdAC6843ccA8B8c127d9d10EdB327fb0ddb2a5576"
-    assert NETWORK == "base"
-    assert USDC_BASE == "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    # NETWORK is CAIP-2 format, set via env var (defaults to mainnet)
+    assert NETWORK.startswith("eip155:")
+    # USDC_BASE auto-selects based on network
+    assert USDC_BASE in [
+        "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",  # mainnet
+        "0x036CbD53842c5426634e7929541eC2318f3dCF7e",  # sepolia
+    ]

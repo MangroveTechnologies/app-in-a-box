@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# gcp-app-template bootstrap script (interactive, human-friendly)
+# x402-app-template bootstrap script (interactive, human-friendly)
 # Prompts for values, then calls init.sh
 
-echo "=== gcp-app-template bootstrap ==="
+echo "=== x402-app-template bootstrap ==="
 echo ""
 
 read -rp "Service name (e.g. my-service): " NAME

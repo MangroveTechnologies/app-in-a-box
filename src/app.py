@@ -4,6 +4,9 @@ Serves dual protocols on a single port:
 - REST API at /api/v1/* with OpenAPI 3.0 docs at /docs and /openapi.json
 - MCP server at /mcp (Streamable HTTP transport)
 
+x402 payment middleware (official Coinbase SDK) protects /api/v1/easter-egg.
+Supports both CDP facilitator (mainnet) and x402.org (testnet) via env vars.
+
 Auto-documentation:
 - Swagger UI: /docs (for humans)
 - OpenAPI spec: /openapi.json (for agents)
@@ -11,10 +14,17 @@ Auto-documentation:
 """
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 from src.health import health_payload
 from src.api.router import api_router
+from src.shared.x402.config import FACILITATOR_URL, NETWORK, PAY_TO
+
+# x402 payment middleware (official SDK)
+from x402.http.middleware.fastapi import payment_middleware
+from x402.http import HTTPFacilitatorClient
+from x402 import x402ResourceServer
+from x402.mechanisms.evm.exact import register_exact_evm_server
 
 
 @asynccontextmanager
@@ -26,8 +36,30 @@ async def lifespan(application: FastAPI):
     yield
 
 
+# -- x402 payment middleware setup --
+from x402.http.facilitator_client_base import FacilitatorConfig
+facilitator = HTTPFacilitatorClient(config=FacilitatorConfig(url=FACILITATOR_URL))
+x402_server = x402ResourceServer(facilitator)
+register_exact_evm_server(x402_server)
+
+x402_routes = {
+    "GET /api/v1/easter-egg": {
+        "accepts": {
+            "scheme": "exact",
+            "network": NETWORK,
+            "payTo": PAY_TO,
+            "price": "$0.05",
+        },
+        "resource": "Easter egg",
+        "description": "Thank you for supporting the project and strengthening the ecosystem",
+    },
+}
+
+x402_handler = payment_middleware(x402_routes, x402_server)
+
+
 app = FastAPI(
-    title="GCP App Template",
+    title="x402 App Template",
     description=(
         "FastAPI + MCP service template with three-tier access control.\n\n"
         "## For Agents\n\n"
@@ -50,6 +82,21 @@ app = FastAPI(
         {"name": "easter-egg", "description": "Easter egg endpoint (x402-gated, $0.05 USDC on Base)"},
     ],
 )
+
+
+@app.middleware("http")
+async def x402_middleware(request: Request, call_next):
+    """x402 payment middleware -- protects easter-egg endpoint.
+
+    API key holders bypass payment via the route handler (not this middleware).
+    This middleware only intercepts requests without an API key.
+    """
+    # Let API key holders through without payment
+    api_key = request.headers.get("x-api-key")
+    if api_key:
+        return await call_next(request)
+    return await x402_handler(request, call_next)
+
 
 app.include_router(api_router)
 

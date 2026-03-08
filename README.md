@@ -1,4 +1,4 @@
-# gcp-app-template
+# x402-app-template
 
 FastAPI + MCP service template for GCP Cloud Run. Dual protocol (REST + MCP), three-tier access control (free, auth-gated, x402-gated), auto-documentation, Terraform IaC, OIDC CI/CD.
 
@@ -9,7 +9,7 @@ Designed for agents first, humans second.
 ### 1. Clone and bootstrap
 
 ```bash
-git clone https://github.com/MangroveTechnologies/gcp-app-template.git my-service
+git clone https://github.com/MangroveTechnologies/x402-app-template.git my-service
 cd my-service
 
 # For agents (non-interactive):

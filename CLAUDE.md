@@ -1,4 +1,4 @@
-# gcp-app-template
+# x402-app-template
 
 ## Start Here
 

@@ -8,8 +8,6 @@ services:
     environment:
       - ENVIRONMENT=local
       - GCP_PROJECT_ID=your-gcp-project
-      - X402_FACILITATOR_URL=${X402_FACILITATOR_URL:-https://x402.org/facilitator}
-      - X402_NETWORK=${X402_NETWORK:-eip155:84532}
     depends_on:
       postgres:
         condition: service_healthy

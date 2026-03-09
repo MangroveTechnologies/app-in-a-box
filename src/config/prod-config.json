@@ -8,5 +8,12 @@
   "CLOUD_SQL_CONNECTION_NAME": "YOUR_PROJECT:us-central1:YOUR_INSTANCE",
   "AUTH_ENABLED": true,
   "API_KEYS": "secret:app-config-prod:api_keys",
-  "REDIS_URL": "secret:app-config-prod:redis_url"
+  "REDIS_URL": "secret:app-config-prod:redis_url",
+  "X402_FACILITATOR_URL": "https://api.cdp.coinbase.com/platform/v2/x402",
+  "X402_NETWORK": "eip155:8453",
+  "X402_PAY_TO": "YOUR_DEPOSIT_ADDRESS",
+  "X402_USDC_CONTRACT": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "X402_EASTER_EGG_PRICE": "50000",
+  "X402_CDP_API_KEY_ID": "secret:app-config-prod:cdp_api_key_id",
+  "X402_CDP_API_KEY_SECRET": "secret:app-config-prod:cdp_api_key_secret"
 }

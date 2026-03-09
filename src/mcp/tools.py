@@ -15,11 +15,6 @@ from mcp.server.fastmcp import FastMCP
 
 from src.services.items import create_item, get_item, list_items
 from src.services.easter_egg import get_easter_egg
-from src.shared.x402.config import (
-    EASTER_EGG_PRICE, EASTER_EGG_DESCRIPTION,
-    FACILITATOR_URL, NETWORK, PAY_TO, USDC_BASE,
-)
-from src.shared.x402.models import PaymentOption, PaymentRequirements
 from src.mcp.registry import register_tool, clear_tools, ToolEntry, ToolParam
 
 

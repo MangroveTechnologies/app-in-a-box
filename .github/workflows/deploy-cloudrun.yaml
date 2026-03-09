@@ -3,6 +3,16 @@ name: Deploy to Cloud Run
 on:
   workflow_dispatch:
 
+  # Uncomment to enable deploy on push to main:
+  # push:
+  #   branches:
+  #     - main
+
+  # Uncomment to enable deploy on pull request to main:
+  # pull_request:
+  #   branches:
+  #     - main
+
 env:
   REGION: us-central1
   PROJECT_ID: YOUR_GCP_PROJECT

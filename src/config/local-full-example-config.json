@@ -1,5 +1,5 @@
 {
-  "AUTH_ENABLED": false,
+  "AUTH_ENABLED": true,
   "API_KEYS": "dev-key-1",
   "X402_FACILITATOR_URL": "https://x402.org/facilitator",
   "X402_NETWORK": "eip155:84532",

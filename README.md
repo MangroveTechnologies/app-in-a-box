@@ -112,10 +112,18 @@ The quick start config uses Base Sepolia testnet. No real money involved.
 **Hit the endpoint with no credentials:**
 
 ```bash
-curl -s http://localhost:8080/api/x402/easter-egg | python3 -m json.tool
+curl -s -D - http://localhost:8080/api/x402/easter-egg
 ```
 
-The 402 response includes the network, asset contract, amount, and facilitator URL. This is everything an x402-enabled client needs to sign a payment and retry the request. The [Coinbase x402 SDK](https://github.com/coinbase/x402) handles this automatically.
+You'll see an `HTTP 402` response with a `payment-required` header containing a base64-encoded JSON payload. Decode it to see the payment details:
+
+```bash
+curl -s -D - http://localhost:8080/api/x402/easter-egg 2>/dev/null \
+  | grep "payment-required:" | cut -d' ' -f2 \
+  | python3 -c "import sys,base64,json; h=sys.stdin.read().strip(); print(json.dumps(json.loads(base64.b64decode(h+'='*(4-len(h)%4))),indent=2))"
+```
+
+The response includes the network, asset contract, amount, deposit address, and facilitator URL. This is everything an x402-enabled client needs to sign a payment and retry the request. The [Coinbase x402 SDK](https://github.com/coinbase/x402) handles this automatically.
 
 **With an API key** (subscribers get free access):
 

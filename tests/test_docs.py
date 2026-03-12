@@ -10,10 +10,13 @@ def test_tool_catalog_returns_all_tools(client):
     data = resp.json()
     assert "tools" in data
     assert "total" in data
-    assert data["total"] == 5
+    assert data["total"] == 8
 
     names = {t["name"] for t in data["tools"]}
-    assert names == {"echo", "items_create", "items_list", "items_get", "easter_egg"}
+    assert names == {
+        "echo", "items_create", "items_list", "items_get",
+        "easter_egg", "notes_create", "notes_list", "notes_get",
+    }
 
 
 def test_tool_catalog_includes_access_tiers(client):
@@ -44,8 +47,9 @@ def test_tool_catalog_includes_parameters(client):
     assert echo_params[0]["required"] is False
 
     create_params = tools["items_create"]["parameters"]
-    assert len(create_params) == 2
+    assert len(create_params) == 3
     assert any(p["name"] == "name" and p["required"] is True for p in create_params)
+    assert any(p["name"] == "api_key" and p["required"] is True for p in create_params)
 
 
 def test_openapi_spec_available(client):

@@ -6,79 +6,25 @@ Serves dual protocols on a single port:
 - OpenAPI docs at /docs and /openapi.json
 
 x402 payment middleware (official Coinbase SDK) protects /api/x402/*.
+MCP tools enforce auth and x402 at the tool level (same x402ResourceServer).
 All config loaded from per-environment JSON via app_config singleton.
 """
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from x402 import x402ResourceServer
-from x402.http import HTTPFacilitatorClient
-from x402.http.facilitator_client_base import CreateHeadersAuthProvider, FacilitatorConfig
-
-# x402 payment middleware (official SDK)
 from x402.http.middleware.fastapi import payment_middleware
-from x402.mechanisms.evm.exact import register_exact_evm_server
-from x402.mechanisms.evm.exact.server import ExactEvmScheme
 
 from src.api.router import api_router, x402_router
 from src.health import health_payload
-from src.shared.x402.config import (
-    get_cdp_api_key_id,
-    get_cdp_api_key_secret,
-    get_facilitator_url,
-    get_network,
-    get_pay_to,
-)
-
-
-def _build_cdp_auth_provider():
-    """Build auth provider for CDP facilitator if API keys are configured."""
-    key_id = get_cdp_api_key_id()
-    key_secret = get_cdp_api_key_secret()
-    if not key_id or not key_secret:
-        return None
-
-    from urllib.parse import urlparse
-
-    from cdp.auth import GetAuthHeadersOptions, get_auth_headers
-
-    parsed = urlparse(get_facilitator_url())
-
-    def create_headers():
-        headers_map = {}
-        for endpoint, method in [("verify", "POST"), ("settle", "POST"), ("supported", "GET")]:
-            path = f"{parsed.path}/{endpoint}"
-            h = get_auth_headers(GetAuthHeadersOptions(
-                api_key_id=key_id,
-                api_key_secret=key_secret,
-                request_method=method,
-                request_host=parsed.hostname,
-                request_path=path,
-            ))
-            headers_map[endpoint] = h
-        headers_map["list"] = headers_map.pop("supported")
-        return headers_map
-
-    return CreateHeadersAuthProvider(create_headers)
+from src.shared.x402.config import get_network, get_pay_to
+from src.shared.x402.server import get_x402_server
 
 
 def _setup_x402():
-    """Set up x402 payment middleware from app_config values."""
-    facilitator_url = get_facilitator_url()
+    """Set up x402 payment middleware using the shared x402ResourceServer."""
+    server = get_x402_server()
     network = get_network()
     pay_to = get_pay_to()
-
-    auth_provider = _build_cdp_auth_provider()
-    fc_config = FacilitatorConfig(url=facilitator_url)
-    if auth_provider:
-        fc_config = FacilitatorConfig(url=facilitator_url, auth_provider=auth_provider)
-
-    facilitator = HTTPFacilitatorClient(config=fc_config)
-    server = x402ResourceServer(facilitator)
-    register_exact_evm_server(server)
-    v1_scheme = ExactEvmScheme()
-    server.register("base", v1_scheme)
-    server.register("base-sepolia", v1_scheme)
 
     routes = {
         "GET /api/x402/easter-egg": {
@@ -127,7 +73,8 @@ app = FastAPI(
     openapi_tags=[
         {"name": "discovery", "description": "API and tool discovery endpoints (free, no auth)"},
         {"name": "echo", "description": "Echo/reflect endpoints (free, no auth)"},
-        {"name": "items", "description": "Items CRUD (auth-gated, requires API key)"},
+        {"name": "items", "description": "Items CRUD -- in-memory (auth-gated, requires API key)"},
+        {"name": "notes", "description": "Notes CRUD -- PostgreSQL-backed (auth-gated, requires API key and --profile full)"},
         {"name": "x402", "description": "x402 payment-gated endpoints"},
     ],
 )

@@ -260,18 +260,19 @@ FastAPI app (port 8080)
 +-- /api/v1/                    Free + auth-gated
 |   +-- /docs/tools             :robot: MCP tool catalog (for agents)
 |   +-- /echo                   :unlock: Free -- request reflection
-|   +-- /items/*                :key: Auth-gated -- CRUD demo
+|   +-- /items/*                :key: Auth-gated -- in-memory CRUD
+|   +-- /notes/*                :key: Auth-gated -- PostgreSQL CRUD (--profile full)
 |
 +-- /api/x402/                  Payment-gated
 |   +-- /easter-egg             :moneybag: $0.05 USDC on Base
 |
 +-- /mcp                        :robot: MCP Streamable HTTP transport
     +-- echo                    :unlock: Free
-    +-- items_*                 :key: Auth-gated
-    +-- easter_egg              :moneybag: x402-gated
+    +-- items_*, notes_*        :key: Auth-gated (api_key param)
+    +-- easter_egg              :moneybag: x402-gated (payment param)
 ```
 
-REST and MCP serve the same business logic on the same port. Agents choose their preferred protocol.
+REST and MCP serve the same business logic on the same port. Agents choose their preferred protocol. MCP tools enforce auth and x402 at the tool level -- no backdoors.
 
 ---
 
@@ -322,7 +323,7 @@ cp src/config/local-full-example-config.json src/config/local-config.json
 docker compose --profile full up -d --build
 ```
 
-The `full` profile starts PostgreSQL 16 and Redis 7 alongside the app.
+The `full` profile starts PostgreSQL 16 and Redis 7 alongside the app. The `notes` endpoints (`/api/v1/notes/*` and MCP `notes_*` tools) use PostgreSQL -- they return 503 without it.
 
 ---
 
@@ -353,7 +354,10 @@ See `infra/terraform/SETUP.md` for prerequisites.
 
 ### CI/CD
 
-GitHub Actions workflow at `.github/workflows/deploy-cloudrun.yaml`. Manual trigger by default -- uncomment the push or PR triggers when ready.
+Two GitHub Actions workflows:
+
+- **`ci.yml`** -- Runs `pytest` and `ruff` on every push/PR to main. Automated quality gate.
+- **`deploy-cloudrun.yaml`** -- Deploys to Cloud Run. Manual trigger by default.
 
 Required GitHub secrets:
 - `GCP_WORKLOAD_IDENTITY_PROVIDER`
@@ -400,25 +404,29 @@ src/
     routes/
       docs.py               MCP tool catalog
       echo.py               Free endpoint
-      items.py              Auth-gated CRUD
+      items.py              Auth-gated CRUD (in-memory)
+      notes.py              Auth-gated CRUD (PostgreSQL)
       easter_egg.py         x402-gated endpoint
   services/
-    items.py                Items business logic
+    items.py                Items business logic (in-memory)
+    notes.py                Notes business logic (PostgreSQL)
     easter_egg.py           Easter egg message
   mcp/
     server.py               FastMCP server
-    tools.py                MCP tool definitions
+    tools.py                MCP tool definitions (auth + x402 enforced)
     registry.py             Tool discovery catalog
   shared/
     auth/middleware.py       API key validation
     x402/config.py          Payment config (reads from app_config)
+    x402/server.py          Shared x402ResourceServer (HTTP + MCP)
     db/pool.py              PostgreSQL connection
     db/exceptions.py        DB error hierarchy
     gcp_secret_utils.py     Secret Manager client
   config/                   Per-env JSON config files
-tests/                      30 tests
+db/init.sql                 PostgreSQL schema (auto-loaded by docker)
+tests/                      45 tests
 infra/terraform/            GCP Cloud Run IaC
-.github/workflows/          CI/CD (manual trigger)
+.github/workflows/          CI (pytest + ruff) and deploy (Cloud Run)
 scripts/                    x402 payment test scripts
 ```
 

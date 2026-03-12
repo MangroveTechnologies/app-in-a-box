@@ -78,6 +78,8 @@ Single FastAPI process serving:
 1. Add tool function inside `register()` in `src/mcp/tools.py`
 2. Add `register_tool(ToolEntry(...))` for the discovery catalog
 3. Call same service layer as REST
+4. **Auth-gated tools**: Accept `api_key` parameter, validate with `has_valid_api_key()`
+5. **x402-gated tools**: Accept `api_key` and `payment` parameters, verify payment via `src/shared/x402/server.py`
 
 ## x402 Payment
 
@@ -95,7 +97,8 @@ Switch to mainnet: update `X402_FACILITATOR_URL` and related values in `local-co
 
 - **Local**: `docker compose up -d --build` (app only, or `--profile full` for DB + Redis)
 - **Cloud**: Terraform provisions Cloud Run, AR, Secret Manager, IAM
-- **CI/CD**: Manual trigger via GitHub Actions. Uncomment push/PR triggers in workflow when ready.
+- **CI**: `ci.yml` runs pytest + ruff on push/PR to main
+- **Deploy**: Manual trigger via `deploy-cloudrun.yaml`
 
 ---
 

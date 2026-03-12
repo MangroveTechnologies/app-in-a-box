@@ -1,8 +1,10 @@
 """Items CRUD endpoint tests (auth-gated)."""
 import os
+
 os.environ.setdefault("ENVIRONMENT", "test")
 
 import pytest
+
 from src.services.items import clear_items
 
 

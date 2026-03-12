@@ -1,5 +1,6 @@
 """Test configuration and fixtures."""
 import os
+
 os.environ["ENVIRONMENT"] = "test"
 
 import pytest

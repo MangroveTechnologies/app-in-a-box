@@ -7,27 +7,28 @@ Serves dual protocols on a single port:
 
 x402 payment middleware (official Coinbase SDK) protects /api/x402/*.
 All config loaded from per-environment JSON via app_config singleton.
-Any config value can be overridden at runtime via env var of the same name.
 """
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-
-from src.config import app_config
-from src.health import health_payload
-from src.api.router import api_router, x402_router
-from src.shared.x402.config import (
-    get_facilitator_url, get_network, get_pay_to,
-    get_cdp_api_key_id, get_cdp_api_key_secret,
-)
+from x402 import x402ResourceServer
+from x402.http import HTTPFacilitatorClient
+from x402.http.facilitator_client_base import CreateHeadersAuthProvider, FacilitatorConfig
 
 # x402 payment middleware (official SDK)
 from x402.http.middleware.fastapi import payment_middleware
-from x402.http import HTTPFacilitatorClient
-from x402.http.facilitator_client_base import FacilitatorConfig, CreateHeadersAuthProvider
-from x402 import x402ResourceServer
 from x402.mechanisms.evm.exact import register_exact_evm_server
 from x402.mechanisms.evm.exact.server import ExactEvmScheme
+
+from src.api.router import api_router, x402_router
+from src.health import health_payload
+from src.shared.x402.config import (
+    get_cdp_api_key_id,
+    get_cdp_api_key_secret,
+    get_facilitator_url,
+    get_network,
+    get_pay_to,
+)
 
 
 def _build_cdp_auth_provider():
@@ -38,7 +39,8 @@ def _build_cdp_auth_provider():
         return None
 
     from urllib.parse import urlparse
-    from cdp.auth import get_auth_headers, GetAuthHeadersOptions
+
+    from cdp.auth import GetAuthHeadersOptions, get_auth_headers
 
     parsed = urlparse(get_facilitator_url())
 

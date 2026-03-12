@@ -1,5 +1,6 @@
 """Auto-documentation endpoint tests."""
 import os
+
 os.environ.setdefault("ENVIRONMENT", "test")
 
 

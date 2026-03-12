@@ -1,5 +1,6 @@
 """MCP server registration tests."""
 import os
+
 os.environ.setdefault("ENVIRONMENT", "test")
 
 from src.mcp.server import create_mcp_server

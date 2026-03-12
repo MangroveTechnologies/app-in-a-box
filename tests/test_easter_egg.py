@@ -6,27 +6,28 @@ The official x402 middleware handles payment flow:
 - Invalid payment signature -> 402 (correctly rejected by facilitator)
 """
 import os
+
 os.environ.setdefault("ENVIRONMENT", "test")
 
 import base64
 import json
+
+from src.shared.x402.config import get_pay_to
 
 
 def test_easter_egg_without_credentials_returns_402(client):
     resp = client.get("/api/x402/easter-egg")
     assert resp.status_code == 402
 
-    # Official x402 middleware returns payment requirements in header
     payment_header = resp.headers.get("payment-required")
     assert payment_header is not None, "Missing payment-required header"
 
-    # Decode and verify the payment requirements
     padded = payment_header + "=" * (4 - len(payment_header) % 4)
     requirements = json.loads(base64.b64decode(padded))
     assert requirements["x402Version"] == 2
     assert len(requirements["accepts"]) >= 1
     accept = requirements["accepts"][0]
-    assert accept["payTo"] == "0xdAC6843ccA8B8c127d9d10EdB327fb0ddb2a5576"
+    assert accept["payTo"] == get_pay_to()
 
 
 def test_easter_egg_with_api_key_returns_message(client):

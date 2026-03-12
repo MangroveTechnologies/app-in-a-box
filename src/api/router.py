@@ -5,10 +5,10 @@
 """
 from fastapi import APIRouter
 
-from src.api.routes.echo import router as echo_router
-from src.api.routes.items import router as items_router
 from src.api.routes.docs import router as docs_router
 from src.api.routes.easter_egg import router as easter_egg_router
+from src.api.routes.echo import router as echo_router
+from src.api.routes.items import router as items_router
 
 # Free + auth-gated
 api_router = APIRouter(prefix="/api/v1")

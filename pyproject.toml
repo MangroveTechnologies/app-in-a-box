@@ -17,6 +17,14 @@ markers = [
     "integration: Full workflows requiring running services (>5s)",
 ]
 
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src*"]

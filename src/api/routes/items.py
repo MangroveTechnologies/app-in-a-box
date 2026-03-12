@@ -3,13 +3,11 @@
 Demonstrates the auth-gated access tier. All endpoints require a valid
 API key in the X-API-Key header.
 """
-from typing import Optional
-
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from src.services.items import create_item, delete_item, get_item, list_items
 from src.shared.auth.middleware import validate_api_key
-from src.services.items import create_item, get_item, list_items, delete_item
 
 router = APIRouter()
 

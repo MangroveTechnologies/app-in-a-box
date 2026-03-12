@@ -3,8 +3,8 @@ import json
 import sys
 from typing import Optional
 
-from google.cloud import secretmanager
 from google.api_core import exceptions as google_exceptions
+from google.cloud import secretmanager
 
 
 class SecretUtils:

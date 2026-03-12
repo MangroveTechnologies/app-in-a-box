@@ -403,11 +403,7 @@ src/
     registry.py             Tool discovery catalog
   shared/
     auth/middleware.py       API key validation
-    x402/config.py          Payment config (from app_config)
-    x402/models.py          Payment data models
-    x402/middleware.py       x402 payment decorator
-    x402/facilitator.py     Facilitator HTTP client
-    x402/errors.py          Error hierarchy
+    x402/config.py          Payment config (reads from app_config)
     db/pool.py              PostgreSQL connection
     db/exceptions.py        DB error hierarchy
     gcp_secret_utils.py     Secret Manager client

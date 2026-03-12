@@ -7,15 +7,14 @@ Each tool registers itself in the discovery catalog (src/mcp/registry.py)
 so agents can query /api/v1/docs/tools to discover available tools,
 their parameters, access tiers, and pricing before connecting via MCP.
 """
-import hashlib
 import json
 from datetime import datetime, timezone
 
 from mcp.server.fastmcp import FastMCP
 
-from src.services.items import create_item, get_item, list_items
+from src.mcp.registry import ToolEntry, ToolParam, clear_tools, register_tool
 from src.services.easter_egg import get_easter_egg
-from src.mcp.registry import register_tool, clear_tools, ToolEntry, ToolParam
+from src.services.items import create_item, get_item, list_items
 
 
 def register(server: FastMCP):

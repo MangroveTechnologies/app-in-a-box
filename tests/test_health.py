@@ -1,5 +1,6 @@
 """Health check endpoint tests."""
 import os
+
 os.environ.setdefault("ENVIRONMENT", "test")
 
 

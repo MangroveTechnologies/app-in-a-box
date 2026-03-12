@@ -6,7 +6,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-
 _items: dict[str, dict] = {}
 
 

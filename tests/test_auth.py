@@ -1,10 +1,11 @@
 """Tests for API key auth middleware."""
 import os
+
 os.environ.setdefault("ENVIRONMENT", "test")
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
-import importlib
 
 
 def _make_mock_config(auth_enabled, api_keys="test-key-1,test-key-2"):

@@ -9,7 +9,6 @@ Demonstrates the x402-gated access tier.
 from fastapi import APIRouter, Header, Request
 from pydantic import BaseModel, Field
 
-from src.shared.auth.middleware import has_valid_api_key
 from src.services.easter_egg import get_easter_egg
 
 router = APIRouter()

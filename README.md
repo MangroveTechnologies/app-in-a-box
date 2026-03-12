@@ -48,10 +48,19 @@ cd my-service
 
 ### 2. Configure and run
 
+Two modes:
+
+**Minimal** -- Just the app, no PostgreSQL or Redis. Try x402 immediately:
+```bash
+cp src/config/local-minimal-config.json src/config/local-config.json
+docker compose up -d --build
+```
+
+**Full stack** -- App + PostgreSQL + Redis (for DB-backed features):
 ```bash
 cp src/config/local-example-config.json src/config/local-config.json
 # Edit src/config/local-config.json -- set X402_PAY_TO to your deposit address
-docker compose up -d --build
+docker compose --profile full up -d --build
 ```
 
 ### 3. Verify all three tiers
@@ -195,12 +204,17 @@ Pydantic response models and docstrings are automatically picked up by the OpenA
 
 All config lives in per-environment JSON files at `src/config/`. No env vars for app config (only `ENVIRONMENT` and `GCP_PROJECT_ID` are env vars).
 
-| File | Environment | Secrets |
-|------|------------|---------|
-| `local-example-config.json` | Local dev template | Plain values |
-| `test-config.json` | pytest | Plain values |
-| `dev-config.json` | Development | Secret Manager refs |
-| `prod-config.json` | Production | Secret Manager refs |
+| File | Environment | Mode |
+|------|------------|------|
+| `local-minimal-config.json` | Local dev (x402 only) | Minimal -- no DB keys |
+| `local-example-config.json` | Local dev (full stack) | Full -- includes DB + Redis keys |
+| `test-config.json` | pytest | Minimal |
+| `dev-config.json` | Development | Full (Secret Manager refs) |
+| `prod-config.json` | Production | Full (Secret Manager refs) |
+
+**Key categories** (`src/config/configuration-keys.json`):
+- `required` -- Always validated. App fails without them (auth, x402 settings).
+- `full_app_keys` -- Validated only if present in your config file. If a full_app_key is present but empty, startup fails (catches misconfiguration). If absent, the app starts without those features.
 
 Secret Manager syntax: `"secret:secret-name:property"`
 

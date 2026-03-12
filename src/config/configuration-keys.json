@@ -1,15 +1,7 @@
 {
-  "required_keys": [
-    "DB_HOST",
-    "DB_NAME",
-    "DB_USER",
-    "DB_PASSWORD",
-    "DB_PORT",
-    "DB_SSLMODE",
-    "CLOUD_SQL_CONNECTION_NAME",
+  "required": [
     "AUTH_ENABLED",
     "API_KEYS",
-    "REDIS_URL",
     "X402_FACILITATOR_URL",
     "X402_NETWORK",
     "X402_PAY_TO",
@@ -17,5 +9,15 @@
     "X402_EASTER_EGG_PRICE",
     "X402_CDP_API_KEY_ID",
     "X402_CDP_API_KEY_SECRET"
+  ],
+  "full_app_keys": [
+    "DB_HOST",
+    "DB_NAME",
+    "DB_USER",
+    "DB_PASSWORD",
+    "DB_PORT",
+    "DB_SSLMODE",
+    "CLOUD_SQL_CONNECTION_NAME",
+    "REDIS_URL"
   ]
 }

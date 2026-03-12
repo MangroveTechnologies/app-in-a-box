@@ -2,7 +2,13 @@
 
 Loads per-environment JSON config files from src/config/.
 Resolves GCP Secret Manager references using secret:name:property syntax.
-Validates all required keys at startup.
+
+Key validation:
+- "required" keys: must be present in config file, app fails without them
+- "full_app_keys": validated only if present in config file (preflight check
+  for full-stack deployments with DB + Redis). If a full_app_key is present
+  in the config but has an empty value, startup fails -- this catches
+  misconfiguration early.
 """
 import json
 import os
@@ -23,29 +29,47 @@ class _Config:
             sys.exit(1)
         setattr(self, "ENVIRONMENT", environment)
 
-        configuration_keys = self.get_configuration_keys()
+        required_keys, full_app_keys = self.get_configuration_keys()
         self.load_config_file()
+
         gcp_project_id = os.getenv("GCP_PROJECT_ID")
         if not gcp_project_id:
             print("GCP_PROJECT_ID not set. Secret Manager lookups will fail.")
 
-        for key in configuration_keys:
+        # Validate and load required keys -- fail if any missing
+        for key in required_keys:
             if key not in self._raw_config:
-                print(f"Configuration key {key} missing from config file.")
+                print(f"Required configuration key '{key}' missing from config file.")
                 sys.exit(1)
             key_value = self.get_key_value(key, gcp_project_id)
             if str(key_value).strip().lower() in {"none", "null"}:
                 key_value = None
             setattr(self, key, key_value)
 
+        # Load full_app_keys only if present in config file.
+        # If present, validate they have non-empty values (preflight check).
+        for key in full_app_keys:
+            if key in self._raw_config:
+                value = self._raw_config[key]
+                str_val = str(value).strip()
+                if str_val == "" or str_val.lower() in {"none", "null"}:
+                    print(f"Full-app key '{key}' is present in config but empty. "
+                          f"Either provide a value or remove the key for minimal mode.")
+                    sys.exit(1)
+                key_value = self.get_key_value(key, gcp_project_id)
+                setattr(self, key, key_value)
+
     @staticmethod
-    def get_configuration_keys() -> set:
+    def get_configuration_keys() -> tuple[set, set]:
+        """Load required and full_app_keys from configuration-keys.json."""
         try:
             config_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config")
             keys_path = os.path.join(config_dir, "configuration-keys.json")
             with open(keys_path, "r") as f:
-                keys_list = json.load(f)
-                return set(keys_list["required_keys"])
+                keys_data = json.load(f)
+                required = set(keys_data.get("required", []))
+                full_app = set(keys_data.get("full_app_keys", []))
+                return required, full_app
         except (FileNotFoundError, json.JSONDecodeError) as e:
             print(f"Failed to load configuration-keys.json: {e}")
             sys.exit(1)

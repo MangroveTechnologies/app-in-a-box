@@ -1,6 +1,6 @@
 {
-  "AUTH_ENABLED": true,
-  "API_KEYS": "test-key-1,test-key-2",
+  "AUTH_ENABLED": false,
+  "API_KEYS": "dev-key-1",
   "X402_FACILITATOR_URL": "https://x402.org/facilitator",
   "X402_NETWORK": "eip155:84532",
   "X402_PAY_TO": "0xdAC6843ccA8B8c127d9d10EdB327fb0ddb2a5576",

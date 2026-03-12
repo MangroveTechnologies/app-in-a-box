@@ -7,5 +7,13 @@
   "X402_USDC_CONTRACT": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
   "X402_EASTER_EGG_PRICE": "50000",
   "X402_CDP_API_KEY_ID": "",
-  "X402_CDP_API_KEY_SECRET": ""
+  "X402_CDP_API_KEY_SECRET": "",
+  "DB_HOST": "postgres",
+  "DB_NAME": "app_local_db",
+  "DB_USER": "postgres",
+  "DB_PASSWORD": "postgres",
+  "DB_PORT": "5432",
+  "DB_SSLMODE": "disable",
+  "CLOUD_SQL_CONNECTION_NAME": "",
+  "REDIS_URL": "redis://redis:6379/0"
 }

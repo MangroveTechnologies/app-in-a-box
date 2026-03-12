@@ -33,37 +33,30 @@ This is the three-tier access model in action:
 
 ## Quick Start
 
-### 1. Clone and bootstrap
+No GCP account required. No database required. Just Docker.
+
+### 1. Clone and run
 
 ```bash
 git clone https://github.com/MangroveTechnologies/x402-app-template.git my-service
 cd my-service
-
-# For agents (non-interactive):
-./init.sh --name my-service --gcp-project my-gcp-project --region us-central1
-
-# For humans (interactive):
-./init-interactive.sh
-```
-
-### 2. Configure and run
-
-Two modes:
-
-**Minimal** -- Just the app, no PostgreSQL or Redis. Try x402 immediately:
-```bash
-cp src/config/local-minimal-config.json src/config/local-config.json
+cp src/config/local-example-config.json src/config/local-config.json
 docker compose up -d --build
 ```
 
-**Full stack** -- App + PostgreSQL + Redis (for DB-backed features):
+`local-config.json` is gitignored -- this is where your secrets and project-specific config go. The example config ships ready to run with the x402.org testnet facilitator.
+
+### 2. Try the x402 endpoint
+
 ```bash
-cp src/config/local-example-config.json src/config/local-config.json
-# Edit src/config/local-config.json -- set X402_PAY_TO to your deposit address
-docker compose --profile full up -d --build
+# No credentials -- get 402 with payment requirements
+curl -s http://localhost:8080/api/v1/easter-egg | python3 -m json.tool
+
+# With API key -- free access
+curl -s http://localhost:8080/api/v1/easter-egg -H "X-API-Key: dev-key-1"
 ```
 
-### 3. Verify all three tiers
+### 3. Try the other tiers
 
 ```bash
 # Free tier -- no credentials needed
@@ -75,10 +68,37 @@ curl -X POST http://localhost:8080/api/v1/items \
   -H "Content-Type: application/json" \
   -H "X-API-Key: dev-key-1" \
   -d '{"name":"Widget","description":"A widget"}'
+```
 
-# x402 tier -- returns 402 with payment requirements (or free with API key)
-curl http://localhost:8080/api/v1/easter-egg
-curl http://localhost:8080/api/v1/easter-egg -H "X-API-Key: dev-key-1"
+### 4. Explore the docs
+
+```bash
+# For agents -- MCP tool catalog
+curl http://localhost:8080/api/v1/docs/tools | python3 -m json.tool
+
+# For humans -- open in browser
+open http://localhost:8080/docs
+```
+
+### Full stack mode
+
+When you need PostgreSQL and Redis, copy the full config and use the `full` profile:
+
+```bash
+cp src/config/local-full-example-config.json src/config/local-config.json
+docker compose --profile full up -d --build
+```
+
+### Bootstrap for deployment
+
+When you're ready to deploy to GCP, run the bootstrap to replace placeholder values:
+
+```bash
+# For agents (non-interactive):
+./init.sh --name my-service --gcp-project my-gcp-project --region us-central1
+
+# For humans (interactive):
+./init-interactive.sh
 ```
 
 ## x402 Payment Configuration
@@ -206,11 +226,13 @@ All config lives in per-environment JSON files at `src/config/`. No env vars for
 
 | File | Environment | Mode |
 |------|------------|------|
-| `local-minimal-config.json` | Local dev (x402 only) | Minimal -- no DB keys |
-| `local-example-config.json` | Local dev (full stack) | Full -- includes DB + Redis keys |
+| `local-example-config.json` | Local dev | Minimal (x402 only, no DB keys) |
+| `local-full-example-config.json` | Local dev (full stack) | Full (includes DB + Redis keys) |
 | `test-config.json` | pytest | Minimal |
 | `dev-config.json` | Development | Full (Secret Manager refs) |
 | `prod-config.json` | Production | Full (Secret Manager refs) |
+
+Copy an example to `local-config.json` (gitignored) to get started. The config loader uses `local-config.json` at runtime.
 
 **Key categories** (`src/config/configuration-keys.json`):
 - `required` -- Always validated. App fails without them (auth, x402 settings).

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "app-in-a-box": {
+      "type": "streamableHttp",
+      "url": "http://localhost:8080/mcp/"
+    }
+  }
+}

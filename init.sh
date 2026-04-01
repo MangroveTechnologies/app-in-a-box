@@ -34,13 +34,23 @@ find . -type f \( -name "*.py" -o -name "*.json" -o -name "*.yaml" -o -name "*.y
   -exec sed -i "s/YOUR_TERRAFORM_STATE_BUCKET/${GCP_PROJECT}-terraform-state/g" {} +
 
 # Update pyproject.toml project name
-sed -i "s/x402-app-template/$NAME/g" pyproject.toml
+sed -i "s/x402-app-template/$NAME/g" server/pyproject.toml
 
 # Update FastAPI title
-sed -i "s/x402 App Template/$NAME/g" src/app.py
+sed -i "s/x402 App Template/$NAME/g" server/src/app.py
 
 # Update MCP server name
-sed -i "s/x402-app-template/$NAME/g" src/mcp/server.py
+sed -i "s/x402-app-template/$NAME/g" server/src/mcp/server.py
+
+# Derive display name from service name (capitalize, replace hyphens with spaces)
+SERVICE_NAME="$NAME"
+DISPLAY_NAME=$(echo "$NAME" | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) substr($i,2)}1')
+
+# Update branding.json
+if [ -f branding.json ]; then
+    sed -i '' "s/\"project_name\": \"app-in-a-box\"/\"project_name\": \"$SERVICE_NAME\"/" branding.json
+    sed -i '' "s/\"display_name\": \"App-in-a-Box\"/\"display_name\": \"$DISPLAY_NAME\"/" branding.json
+fi
 
 echo ""
 echo "Done. Files updated with:"
@@ -49,7 +59,7 @@ echo "  GCP project:  $GCP_PROJECT"
 echo "  Region:       $REGION"
 echo ""
 echo "Next steps:"
-echo "  1. cp src/config/local-example-config.json src/config/local-config.json"
+echo "  1. cp server/src/config/local-example-config.json server/src/config/local-config.json"
 echo "  2. docker compose up -d --build"
 echo "  3. curl http://localhost:8080/health"
 echo ""

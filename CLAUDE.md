@@ -1,110 +1,150 @@
-# x402-app-template
+# App-in-a-Box
 
-## Start Here
+## Default Persona
 
-```bash
-# Local development
-cp src/config/local-example-config.json src/config/local-config.json
-docker compose up -d --build
-curl http://localhost:8080/health
-
-# Run tests
-ENVIRONMENT=test pytest tests/ -v
-```
+When working in this repo, you are the **product owner**. Read `.claude/agents/product-owner.md` for your full agent spec.
 
 ## What This Is
 
-FastAPI + MCP service template with x402 payments on Base. Dual protocol (REST + MCP on single port), three-tier access control, Terraform IaC, OIDC CI/CD.
+A general-purpose FastAPI + Claude Code development template. Ships with everything — subtract what you don't need.
+
+**Homepage:** https://mangrovedeveloper.ai
+
+## Getting Started
+
+Two setup paths:
+
+### Path 1: Agent Onboarding (Recommended)
+Run `claude` in this directory. The agent detects a fresh project and starts onboarding.
+
+### Path 2: Non-Interactive
+```bash
+./init.sh --name my-app --gcp-project my-project --region us-central1
+```
+
+## Development Lifecycle
+
+The `.claude/skills/` directory contains skills that guide you through a 4-phase design process:
+
+```
+/onboard → /requirements → /specification → /architecture → /plan → product-owner drives build
+```
+
+Each phase produces a document in `docs/` and requires your approval before proceeding.
+
+| Skill | Output | Purpose |
+|-------|--------|---------|
+| `/onboard` | branding.json, CLAUDE.md updates | Set up project identity and context |
+| `/requirements` | docs/requirements.md | User stories + flow diagrams |
+| `/specification` | docs/specification.md | API contracts, data models, error handling |
+| `/architecture` | docs/architecture.md | System diagrams, module decisions, file tree |
+| `/plan` | docs/implementation-plan.md | Phased tasks with agent assignments |
+
+After `/plan` is approved, the product-owner agent activates and drives implementation.
+
+## Tutorial
+
+Run `/tutorial` for an interactive walkthrough that builds a trading app using the Mangrove developer API. Reference docs in `tutorials/trading-app/`.
 
 ## Architecture
 
-Single FastAPI process serving:
-- REST API at `/api/v1/*` (free + auth-gated)
-- x402 API at `/api/x402/*` (payment-gated)
-- MCP server at `/mcp` (Streamable HTTP via FastMCP)
-- Health check at `/health`
-- Auto-docs at `/docs`, `/openapi.json`, `/api/v1/docs/tools`
+### Dual Protocol
+- **REST:** `/api/v1/*` (free + auth), `/api/x402/*` (payment-gated)
+- **MCP:** `/mcp` (all tiers via FastMCP)
 
-### Three-Tier Access Model
+### Three-Tier Access
+- **Free:** No credentials (health, echo, discovery)
+- **Auth:** API key in `X-API-Key` header
+- **x402:** Payment or API key bypass
 
-| Tier | No credentials | API key | x402 payment |
-|------|---------------|---------|-------------|
-| Free | OK | OK | OK |
-| Auth-gated | 401 | OK | 401 |
-| x402-gated (REST) | 402 | OK (free) | OK (paid) |
-| x402-gated (MCP) | payment requirements | N/A | OK (paid) |
+### Service Layer Pattern
+Routes and MCP tools both call shared services in `server/src/services/`. Never duplicate business logic.
 
-## Routing Convention
+## Directory Structure
 
-- `/api/v1/*` -- Free and auth-gated endpoints
-- `/api/x402/*` -- x402 payment-gated endpoints
-- `/mcp` -- MCP tools (all tiers)
-
-## Configuration
-
-- `ENVIRONMENT` env var selects config file (local/dev/test/prod)
-- JSON files in `src/config/` with `secret:name:property` syntax for GCP Secret Manager
-- Config file is the single source of truth -- edit and restart to change values
-- Required keys validated at startup (fails fast on missing keys)
-- Full_app_keys (DB, Redis) validated only if present in config file
-
-### Secrets
-
-- **Local/test**: Plain values in JSON config files
-- **Dev/prod**: Use `secret:name:property` syntax to resolve from GCP Secret Manager
-- **AWS**: Coming soon
+```
+app-in-a-box/
+├── .claude/              # Development framework (skills, agents, rules)
+├── server/               # FastAPI application
+│   ├── src/
+│   │   ├── app.py        # App factory
+│   │   ├── config.py     # Config singleton
+│   │   ├── api/routes/   # REST endpoints
+│   │   ├── mcp/          # MCP tools
+│   │   ├── services/     # Business logic
+│   │   └── shared/       # Auth, DB, x402 utilities
+│   ├── tests/
+│   └── db/
+├── plugin/               # Claude Code plugin for end users
+├── tutorials/            # Tutorial reference docs
+├── docs/                 # Generated design docs
+├── assets/               # Branding files
+├── branding.json         # Branding configuration
+├── docker-compose.yml
+└── infra/terraform/
+```
 
 ## Key Conventions
 
-- Free/auth routes in `src/api/routes/`, x402 routes also in `src/api/routes/`
-- Services in `src/services/`
-- MCP tools in `src/mcp/tools.py` via `register(server)` pattern
-- Both REST and MCP call the same service layer (no duplication)
-- Tests mirror source: `src/api/routes/items.py` -> `tests/test_items.py`
-- `ENVIRONMENT=test` must be set before running pytest
+- **Routes** in `server/src/api/routes/` — one file per resource
+- **Services** in `server/src/services/` — one file per resource, called by routes AND MCP tools
+- **MCP tools** in `server/src/mcp/tools.py` — registered via `register_tool()`
+- **Tests** in `server/tests/` — mirror the src/ structure
+- **Config** in `server/src/config/` — per-environment JSON files
 
 ## Adding Endpoints
 
-### New free/auth route
-1. Create `src/api/routes/your_route.py` with `APIRouter`
-2. Create `src/services/your_service.py` with logic
-3. Include in `api_router` in `src/api/router.py`
+### Free endpoint
+1. Create route in `server/src/api/routes/{resource}.py`
+2. Create service in `server/src/services/{resource}.py`
+3. Register route in `server/src/api/router.py` under `api_router`
+4. Register MCP tool in `server/src/mcp/tools.py`
+5. Write tests in `server/tests/test_{resource}.py`
 
-### New x402-gated route
-1. Create route in `src/api/routes/`
-2. Include in `x402_router` in `src/api/router.py`
-3. Add route pattern to `x402_routes` in `src/app.py`
+### Auth-gated endpoint
+Same as above, plus add `validate_api_key()` check in route and `has_valid_api_key()` in MCP tool.
 
-### New MCP tool
-1. Add tool function inside `register()` in `src/mcp/tools.py`
-2. Add `register_tool(ToolEntry(...))` for the discovery catalog
-3. Call same service layer as REST
-4. **Auth-gated tools**: Accept `api_key` parameter, validate with `has_valid_api_key()`
-5. **x402-gated tools**: Accept `payment` parameter ONLY (no API key bypass). Verify payment via `src/shared/x402/server.py`. If you want API key access, use the REST endpoint.
-
-## x402 Payment
-
-All x402 config in per-environment JSON files:
-- `X402_FACILITATOR_URL` -- CDP production or x402.org testnet
-- `X402_NETWORK` -- `eip155:8453` (Base mainnet) or `eip155:84532` (Sepolia)
-- `X402_PAY_TO` -- address that receives payments
-- `X402_USDC_CONTRACT` -- USDC token contract
-- `X402_EASTER_EGG_PRICE` -- price in base units (50000 = $0.05)
-- `X402_CDP_API_KEY_ID` / `X402_CDP_API_KEY_SECRET` -- for CDP facilitator
-
-local-config.json should use mainnet (CDP facilitator, eip155:8453). Example configs use testnet for safe onboarding.
-
-Shared x402ResourceServer in `src/shared/x402/server.py` -- used by both HTTP middleware and MCP tools. Never duplicate x402 setup.
+### x402 payment-gated endpoint
+Route goes under `x402_router`. See `server/src/api/routes/easter_egg.py` for the pattern.
 
 ## Deployment
 
-- **Local**: `docker compose up -d --build` (app only, or `--profile full` for DB + Redis)
-- **Cloud**: Terraform provisions Cloud Run, AR, Secret Manager, IAM
-- **CI**: `ci.yml` runs pytest + ruff on push/PR to main
-- **Deploy**: Manual trigger via `deploy-cloudrun.yaml`
+### Local
+```bash
+docker compose up -d --build              # App only
+docker compose up -d --build --profile full  # App + PostgreSQL + Redis
+```
 
----
+### Cloud (GCP)
+```bash
+cd infra/terraform
+terraform init -backend-config=backend-dev.hcl
+terraform plan -var-file=environment-dev.tfvars
+```
 
-## Project-Specific Rules
+### CI/CD
+GitHub Actions runs on push to main and PRs:
+- `ci.yml` — lint (ruff) + test (pytest)
+- `deploy-cloudrun.yaml` — build + deploy to Cloud Run
 
-Add your project-specific conventions below this line.
+## Configuration
+
+Set `ENVIRONMENT` env var to select config file:
+- `local` → `server/src/config/local-config.json`
+- `dev` → `server/src/config/dev-config.json`
+- `test` → `server/src/config/test-config.json`
+- `prod` → `server/src/config/prod-config.json`
+
+Secrets use `secret:name:property` syntax for GCP Secret Manager.
+
+## Git Workflow
+
+Read `.claude/rules/git-workflow.md`. Never commit to main. Feature branches + PRs only.
+
+## Branding
+
+Edit `branding.json` and update `assets/` to re-skin. Run `init.sh` to propagate changes.
+
+## Project Context
+
+<!-- Updated by /onboard skill -->

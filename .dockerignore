@@ -12,3 +12,9 @@ __pycache__
 .idea/
 .vscode/
 TEMPLATE-REVIEW.md
+.claude/
+plugin/
+tutorials/
+assets/
+.superpowers/
+branding.json

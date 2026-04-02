@@ -1,0 +1,17 @@
+{
+  "project_name": "app-in-a-box",
+  "display_name": "App-in-a-Box",
+  "org_name": "Mangrove Technologies",
+  "tagline": "Ship faster with Claude Code",
+  "urls": {
+    "homepage": "https://mangrovedeveloper.ai",
+    "docs": "",
+    "repository": "https://github.com/MangroveTechnologies/app-in-a-box"
+  },
+  "colors": {
+    "primary": "#2D5A3D",
+    "secondary": "#4A8C6F",
+    "accent": "#E8B931"
+  },
+  "prefix": "mangrove"
+}

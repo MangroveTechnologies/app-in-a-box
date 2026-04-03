@@ -54,7 +54,7 @@ async def lifespan(application: FastAPI):
 
 
 app = FastAPI(
-    title="x402 App Template",
+    title="App-in-a-Box",
     description=(
         "FastAPI + MCP service template with three-tier access control.\n\n"
         "## For Agents\n\n"

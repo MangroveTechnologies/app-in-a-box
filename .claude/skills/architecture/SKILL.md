@@ -315,4 +315,4 @@ If `docs/architecture.md` already exists:
 - Every diagram should be self-explanatory. A developer should be able to understand the system from the diagrams alone.
 - The folder/file hierarchy is critical — it locks in the decomposition decisions that the implementation plan builds on.
 - Module retention decisions must be justified. Don't remove something just because the user didn't explicitly mention it — remove it because the architecture doesn't need it.
-- Use the existing x402-app-template structure as the baseline. Only deviate when the spec requires it.
+- Use the existing app-in-a-box structure as the baseline. Only deviate when the spec requires it.

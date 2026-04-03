@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
-name = "x402-app-template"
+name = "app-in-a-box"
 version = "0.1.0"
-description = "FastAPI + MCP service template for GCP Cloud Run"
+description = "General-purpose FastAPI + Claude Code development template"
 requires-python = ">=3.11"
 
 [tool.pytest.ini_options]

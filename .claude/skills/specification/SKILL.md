@@ -66,7 +66,7 @@ For each action identified in Step 1, define the API endpoint:
 - 404: {When and why}
 ```
 
-Follow these conventions (matching x402-app-template patterns):
+Follow these conventions (matching app-in-a-box patterns):
 - Free endpoints: `/api/v1/{resource}`
 - Auth-gated endpoints: `/api/v1/{resource}` with X-API-Key header
 - x402 payment-gated: `/api/x402/{resource}`
@@ -205,6 +205,6 @@ If `docs/specification.md` already exists:
 ## Notes
 
 - The spec must be traceable to requirements. Every endpoint should map to at least one user story.
-- Use the x402-app-template patterns as the reference implementation. The server/ directory already demonstrates the service layer pattern, auth middleware, MCP tool registration, and x402 payment flow.
+- Use the app-in-a-box patterns as the reference implementation. The server/ directory already demonstrates the service layer pattern, auth middleware, MCP tool registration, and x402 payment flow.
 - Don't over-specify. If the requirements are simple, the spec should be simple.
 - MCP tools MUST mirror REST endpoints through a shared service layer — never duplicate business logic.

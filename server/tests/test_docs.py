@@ -57,7 +57,7 @@ def test_openapi_spec_available(client):
     assert resp.status_code == 200
     spec = resp.json()
     assert spec["openapi"].startswith("3.")
-    assert spec["info"]["title"] == "x402 App Template"
+    assert spec["info"]["title"] == "App-in-a-Box"
 
 
 def test_swagger_ui_available(client):

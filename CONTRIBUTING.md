@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in contributing to x402-app-template.
+Thanks for your interest in contributing to app-in-a-box.
 
 ## Getting Started
 
@@ -32,7 +32,7 @@ ruff check src/ tests/
 
 ## Reporting Issues
 
-Open an issue at [github.com/MangroveTechnologies/x402-app-template/issues](https://github.com/MangroveTechnologies/x402-app-template/issues).
+Open an issue at [github.com/MangroveTechnologies/app-in-a-box/issues](https://github.com/MangroveTechnologies/app-in-a-box/issues).
 
 ## License
 

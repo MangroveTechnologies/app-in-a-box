@@ -1,4 +1,4 @@
--- Database initialization for x402-app-template (full profile).
+-- Database initialization for app-in-a-box (full profile).
 -- Run automatically by docker-compose when using --profile full.
 
 CREATE TABLE IF NOT EXISTS notes (

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# x402-app-template bootstrap script (interactive, human-friendly)
+# app-in-a-box bootstrap script (interactive, human-friendly)
 # Prompts for values, then calls init.sh
 
-echo "=== x402-app-template bootstrap ==="
+echo "=== app-in-a-box bootstrap ==="
 echo ""
 
 read -rp "Service name (e.g. my-service): " NAME

@@ -17,7 +17,7 @@ def create_mcp_server() -> FastMCP:
     if _mcp_server is not None:
         return _mcp_server
 
-    _mcp_server = FastMCP("x402-app-template")
+    _mcp_server = FastMCP("app-in-a-box")
 
     from src.mcp.tools import register
     register(_mcp_server)

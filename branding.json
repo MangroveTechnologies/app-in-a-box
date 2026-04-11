@@ -1,12 +1,12 @@
 {
-  "project_name": "app-in-a-box",
-  "display_name": "App-in-a-Box",
-  "org_name": "Mangrove Technologies",
-  "tagline": "Ship faster with Claude Code",
+  "project_name": "defi-agent",
+  "display_name": "Hank",
+  "org_name": "Mangrove",
+  "tagline": "",
   "urls": {
     "homepage": "https://mangrovedeveloper.ai",
     "docs": "",
-    "repository": "https://github.com/MangroveTechnologies/app-in-a-box"
+    "repository": ""
   },
   "colors": {
     "primary": "#2D5A3D",

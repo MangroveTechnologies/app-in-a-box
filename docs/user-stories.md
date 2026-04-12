@@ -3,8 +3,46 @@
 Scope for the AI trading bot ("Hank", project code: `defi-agent`). These stories and flows define the surface area the Mangrove SDK + MCP server must expose. Endpoint-level detail is in [`api-reference.md`](./api-reference.md).
 
 **Users:** both humans and agents, via chat interface (no UI).
-**Funds:** real funds (not testnet).
+**Funds:** real funds.
 **Risk management:** fully delegated to the Mangrove API (`execution_config`). The only human-confirmed financial actions are **deposits to a strategy** and **withdrawals from a strategy**.
+
+---
+
+## Architecture Decisions
+
+These decisions shape the stories and flows below.
+
+### Wallet & Key Management
+- **Hank holds wallet keys directly.** No smart contract, no escrow, no platform-backend dependency.
+- Keys stored locally (encrypted). User's wallet IS the strategy wallet.
+- Multiple strategies on one wallet → Hank tracks allocations in local DB.
+- No KMS, no admin signer. Hank runs locally under user control.
+
+### Strategy Generation
+- **Hank autonomously generates candidates** from a user's natural-language goal via a dedicated skill.
+- The skill uses signal metadata + KB knowledge to intelligently pick 5–10 viable candidates.
+- Manual strategy composition remains available as a power-user path.
+
+### Three-Stage Backtest Flow
+1. **Skill** picks 5–10 viable candidates from goal
+2. **Quick-mode backtest** on all candidates (lightweight, fast ranking)
+3. **Filter:** `win_rate > 51%`, `total_trades >= 10`
+4. **Rank** by IRR (annualized)
+5. **Full backtest** on top-1 for deep analysis
+6. Present to user for deploy decision
+
+### Execution Model
+- **Cron-based.** When a strategy goes `paper` or `live`, Hank registers a cron job keyed to the strategy's timeframe.
+- **Same path for paper and live.** Evaluator returns `OrderIntent[]`; executor branches:
+  - `live` → calls DEX endpoints, records tx hash + fill details
+  - `paper` → simulates fill at market price, records hypothetical fill
+- **Decoupled.** Strategy evaluation is a pure function (market data + positions → order intents). Order execution is a separate module.
+- **Live execution:** anything 1inch supports. No artificial chain gating.
+
+### Logging & Audit Trail
+- **Every strategy evaluation** is logged (timestamp, strategy_id, market state, signals fired, order intents generated).
+- **Every trade** is logged (order intent, execution mode, tx hash (live) or simulated fill (paper), amounts, prices, fees, P&L).
+- Local SQLite storage. Full audit trail for every cron tick.
 
 ---
 
@@ -16,7 +54,7 @@ Scope for the AI trading bot ("Hank", project code: `defi-agent`). These stories
 
 **US-1:** As a user, I want to create a wallet so that I can hold and trade crypto assets.
 - [ ] Supports XRPL and EVM chains
-- [ ] Returns address and keys (stored locally, never sent back)
+- [ ] Returns address and keys (stored locally, encrypted, never sent back)
 - [ ] Displays funded status
 
 **US-2:** As a user, I want to check my wallet balances so that I know what assets I hold.
@@ -32,7 +70,7 @@ Scope for the AI trading bot ("Hank", project code: `defi-agent`). These stories
 - [ ] Shows input/output amounts, exchange rate, and fees
 
 **US-5:** As a user, I want to execute a token swap so that I can trade one asset for another.
-- [ ] Full flow: quote → approve → prepare → sign → broadcast → confirm
+- [ ] Full flow: quote → check allowance → approve (if needed) → prepare → sign → broadcast → confirm
 - [ ] Agent handles signing locally
 - [ ] Transaction status tracked to confirmation
 
@@ -66,9 +104,9 @@ Scope for the AI trading bot ("Hank", project code: `defi-agent`). These stories
 - [ ] Search by name, params, or keywords
 - [ ] View parameter specs (type, min, max, defaults)
 
-**US-12:** As a user, I want to create a trading strategy by composing entry and exit rules from signals so that I can automate my trading logic.
-- [ ] Compose entry rules (1 TRIGGER + 0+ FILTERs)
-- [ ] Compose exit rules (0-1 TRIGGER + 0+ FILTERs)
+**US-12:** As a user, I want to create a trading strategy so that I can automate my trading logic.
+- [ ] **Autonomous mode (default):** describe a goal in natural language → Hank generates candidates, backtests, and presents the best
+- [ ] **Manual mode (power user):** compose entry rules (1 TRIGGER + 0+ FILTERs) and exit rules (0–1 TRIGGER + 0+ FILTERs) directly
 - [ ] Configure execution parameters or use defaults
 - [ ] Strategy persisted to database
 
@@ -80,19 +118,22 @@ Scope for the AI trading bot ("Hank", project code: `defi-agent`). These stories
 - [ ] Status transitions: draft → inactive → paper → live → archived
 
 **US-15:** As a user, I want to backtest a strategy against historical data so that I can evaluate its performance.
-- [ ] Supports multiple date range modes (explicit, lookback, from-date-to-now)
-- [ ] Returns sharpe, sortino, calmar, max drawdown, win rate
-- [ ] Returns full trade history with entry/exit details
+- [ ] Quick mode: fast ranking across multiple candidates (lightweight, no exec param sweep)
+- [ ] Full mode: deep analysis with sharpe, sortino, calmar, max drawdown, win rate, IRR, full trade history
+- [ ] Candidate filtering: `win_rate > 51%`, `total_trades >= 10`
+- [ ] Candidate ranking: IRR (annualized)
 
-**US-16:** As a user, I want to evaluate my strategy against current market data so that it can generate trade signals.
-- [ ] Loads open positions, checks SL/TP/signal exits
-- [ ] Evaluates entry conditions for new positions
-- [ ] Persists orders, positions, and trades
-- [ ] Stateful execution across evaluations
+**US-16:** As a user, I want my strategy to automatically evaluate and trade on a schedule so that I don't have to manually trigger execution.
+- [ ] Cron job registered at strategy activation, keyed to strategy timeframe
+- [ ] Evaluator returns `OrderIntent[]` (pure function, no side effects)
+- [ ] Executor places orders: live (DEX) or paper (simulated fill)
+- [ ] Same evaluation path for paper and live — only order placement differs
+- [ ] All evaluations and trades logged to local DB
 
 **US-17:** As a user, I want to deposit funds to a strategy and withdraw from it so that I can fund and manage my trading.
 - [ ] Requires explicit human confirmation
 - [ ] Only user-confirmed financial action
+- [ ] Funds stay in user's wallet; Hank tracks per-strategy allocations locally
 
 ### 4. Knowledge Base
 
@@ -113,7 +154,7 @@ Four flows cover all 18 stories.
 flowchart TD
     A[User: I want to trade] --> B{Has wallet?}
     B -->|No| C[Hank: wallet_create]
-    C --> D[Store keys locally<br/>Display address + warnings]
+    C --> D[Store keys locally encrypted<br/>Display address + warnings]
     D --> E[User funds wallet<br/>HUMAN CONFIRMATION]
     B -->|Yes| F[Hank: oneinch_balances]
     E --> F
@@ -124,15 +165,15 @@ flowchart TD
     J --> K[Display quote + fees]
     K --> L{User approves?}
     L -->|No| M[Abort]
-    L -->|Yes| N{ERC-20 token?}
-    N -->|Yes| O[Hank: dex_approve_token]
-    O --> P[Sign + dex_broadcast]
-    P --> Q[Hank: dex_tx_status<br/>wait for confirmation]
-    N -->|No| R[Hank: dex_prepare_swap]
-    Q --> R
-    R --> S[Sign + dex_broadcast]
-    S --> T[Hank: dex_tx_status<br/>wait for confirmation]
-    T --> U[Swap complete<br/>Display tx hash]
+    L -->|Yes| N[Hank: dex_check_allowance]
+    N --> O{Sufficient allowance?}
+    O -->|No| P[Hank: dex_approve_token<br/>Sign + dex_broadcast<br/>Wait for approval tx]
+    O -->|Yes| Q[Hank: dex_prepare_swap]
+    P --> Q
+    Q --> R[Sign + dex_broadcast]
+    R --> S[Hank: dex_tx_status<br/>Wait for confirmation]
+    S --> T[Swap complete<br/>Display tx hash]
+    T --> U[Log trade to local DB]
 ```
 
 **Covers:** US-1, US-2, US-3, US-4, US-5
@@ -143,22 +184,29 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A[User: Build me a strategy] --> B[Hank: GET /signals<br/>or POST /signals/search]
-    B --> C[Present available signals<br/>by category]
-    C --> D[User selects signals<br/>for entry + exit rules]
-    D --> E{Valid composition?}
-    E -->|No| F[Explain constraint<br/>Ask user to revise]
-    F --> D
-    E -->|Yes| G[Hank: POST /strategies<br/>with entry + exit rules]
-    G --> H[Strategy created<br/>status=inactive<br/>execution_config defaults loaded]
-    H --> I{Backtest?}
-    I -->|Yes| J[Hank: POST /backtesting/backtest<br/>with strategy_json + date range]
-    J --> K[Return metrics:<br/>sharpe, sortino, max drawdown,<br/>win rate, trade history]
+    A[User: Build me a strategy] --> B{Creation mode?}
+    B -->|Autonomous| C[User describes goal<br/>in natural language]
+    C --> D[Hank skill: select 5-10<br/>candidate signal combos<br/>from goal + signal catalog + KB]
+    D --> E[Hank: quick-mode backtest<br/>on all candidates]
+    E --> F[Filter: win_rate > 51%<br/>AND total_trades >= 10]
+    F --> G{Any survivors?}
+    G -->|No| H[Report: no viable strategies<br/>Suggest different goal/timeframe]
+    H --> C
+    G -->|Yes| I[Rank survivors by IRR]
+    I --> J[Hank: full backtest<br/>on top candidate]
+    J --> K[Present full metrics:<br/>IRR, sharpe, sortino, drawdown,<br/>win rate, trade history]
     K --> L{User satisfied?}
-    L -->|No| M[Tweak rules or params]
-    M --> G
-    L -->|Yes| N[Strategy ready<br/>for deployment]
-    I -->|No| N
+    L -->|No| M[Refine goal or constraints]
+    M --> C
+    L -->|Yes| N[Hank: POST /strategies<br/>Strategy persisted]
+    B -->|Manual| O[User composes entry + exit<br/>rules from signal catalog]
+    O --> P{Valid composition?}
+    P -->|No| Q[Explain constraint<br/>Ask user to revise]
+    Q --> O
+    P -->|Yes| R[Hank: POST /strategies]
+    R --> S[User: backtest]
+    S --> J
+    N --> T[Strategy ready<br/>for deployment]
 ```
 
 **Covers:** US-11, US-12, US-13, US-15
@@ -171,33 +219,42 @@ Composition constraint: entry = 1 TRIGGER + 0+ FILTERs, exit = 0–1 TRIGGER + 0
 
 ```mermaid
 flowchart TD
-    A[User: Deploy my strategy] --> B[Hank: GET strategy by id]
-    B --> C[Display strategy details]
-    C --> D[User: Deposit funds<br/>HUMAN CONFIRMATION]
-    D --> E[Deposit transaction executed]
-    E --> F[Hank: PATCH strategy status<br/>paper or live]
-    F --> G[Strategy active]
-    G --> H[Loop: Hank: POST execution evaluate]
-    H --> I{Open positions?}
-    I -->|Yes| J[Check SL/TP/time/signal exits]
-    J --> K{Exit triggered?}
-    K -->|Yes| L[Generate exit order<br/>Persist position close]
-    K -->|No| M[Hold position]
-    I -->|No| N[Check entry signals]
-    N --> O{Entry triggered?}
-    O -->|Yes| P[Generate entry order<br/>Persist new position]
-    O -->|No| Q[No action]
-    L --> R[Display new orders<br/>and execution state]
-    M --> R
-    P --> R
-    Q --> R
-    R --> S{Continue?}
-    S -->|Yes| H
-    S -->|No| T[User: Withdraw funds<br/>HUMAN CONFIRMATION]
-    T --> U[Hank: PATCH status=inactive<br/>Withdraw transaction executed]
+    A[User: Deploy my strategy] --> B[Hank: GET strategy details]
+    B --> C[Display strategy + wallet balance]
+    C --> D{Paper or live?}
+    D -->|Paper| E[Hank: PATCH status = paper]
+    D -->|Live| F[User: confirm deposit amount<br/>HUMAN CONFIRMATION]
+    F --> G[Hank: record allocation<br/>in local DB]
+    G --> H[Hank: PATCH status = live]
+    E --> I[Register cron job<br/>keyed to strategy timeframe]
+    H --> I
+    I --> J[Cron tick fires]
+    J --> K[Strategy evaluator:<br/>load positions + market data]
+    K --> L{Open positions?}
+    L -->|Yes| M[Check SL/TP/time/signal exits]
+    M --> N{Exit triggered?}
+    N -->|Yes| O[Generate exit OrderIntent]
+    N -->|No| P[Hold — no action]
+    L -->|No| Q[Check entry signals]
+    Q --> R{Entry triggered?}
+    R -->|Yes| S[Generate entry OrderIntent]
+    R -->|No| T[No action]
+    O --> U[Order executor]
+    S --> U
+    U --> V{Strategy mode?}
+    V -->|Live| W[Execute via DEX endpoints<br/>Record tx hash + fill]
+    V -->|Paper| X[Simulate fill at market price<br/>Record hypothetical fill]
+    W --> Y[Log evaluation + trade<br/>to local DB]
+    X --> Y
+    P --> Y
+    T --> Y
+    Y --> Z[Await next cron tick]
+    Z --> J
 ```
 
-**Covers:** US-13, US-14, US-16, US-17
+**Covers:** US-14, US-16, US-17
+
+To stop: user requests withdrawal (HUMAN CONFIRMATION) → Hank cancels cron job → PATCH status = inactive → release allocation.
 
 ---
 

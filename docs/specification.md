@@ -14,17 +14,17 @@ Hank exposes the same functionality two ways:
 
 Both protocols share a single service layer — `create_wallet` (MCP tool) and `POST /api/v1/hank/wallet/create` (REST endpoint) call the same Python function. No duplicated business logic.
 
-Hank is single-user, local-by-default, deployable to GCP Cloud Run for the workshop demo. It holds wallet keys locally (encrypted), registers APScheduler cron jobs at strategy activation, and logs every evaluation and trade to local SQLite.
+Hank is single-user and **local-first**. It runs on the user's own machine via Docker Compose — no cloud account required. It holds wallet keys locally (encrypted), registers APScheduler cron jobs at strategy activation, and logs every evaluation and trade to local SQLite.
 
 ### Deployment modes
 
-| Mode | State persistence | Use case |
-|------|-------------------|----------|
-| **Local** | `hank.db` in user's filesystem — persists across restarts | Daily use, development |
-| **Cloud Run (demo)** | `hank.db` in ephemeral container filesystem — **wiped on every redeploy** | Workshop demo, fresh state each session |
-| **Cloud Run (persistent)** | **Not v1.** Requires swapping SQLite for Cloud SQL or mounting a GCS volume | Future |
+| Mode | State persistence | Requirements | Use case |
+|------|-------------------|--------------|----------|
+| **Local (default)** | `hank.db` in user's filesystem — persists across restarts | Docker Compose, Python 3.10+ | Daily use, development, real trading |
+| **Cloud Run (optional, demo)** | `hank.db` in ephemeral container filesystem — **wiped on every redeploy** | GCP account (optional) | Workshop demo only; fresh state each session |
+| **Cloud Run (persistent)** | **Not v1.** Requires swapping SQLite for Cloud SQL or mounting a GCS volume | — | Future |
 
-**Workshop deploy is demo-only.** If a user deploys their live bot to Cloud Run and redeploys, all wallets/strategies/trade history are lost. The encrypted wallet file is local-only by design.
+**Most users will run Hank locally.** No GCP/AWS account is required. The Cloud Run option exists only for demo scenarios (e.g., the April 24 workshop) where a throwaway public URL is useful. If a user deploys to Cloud Run and redeploys, all state is lost by design — persistent cloud deploy is out of scope for v1.
 
 ## Access Tiers
 

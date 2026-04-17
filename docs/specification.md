@@ -6,9 +6,25 @@
 
 ## Overview
 
-Hank is a FastAPI + MCP service that wraps the `mangroveai` and `mangrovemarkets` Python SDKs with local state, autonomous strategy generation, cron-based execution, and a full audit trail. The user (human or agent) connects via chat — Claude Code speaks to Hank's MCP endpoint at `/mcp`; other agents speak to its REST endpoints at `/api/v1/hank/*`. Under the hood, routes and MCP tools share a single service layer.
+Hank is a FastAPI + MCP service that wraps the `mangroveai` and `mangrovemarkets` Python SDKs with local state, autonomous strategy generation, cron-based execution, and a full audit trail.
+
+Hank exposes the same functionality two ways:
+- **MCP tools at `/mcp`** (Streamable HTTP transport) — preferred for AI agents because of structured tool discovery and typed invocation.
+- **REST endpoints at `/api/v1/hank/*`** — universal; any HTTP client (Python scripts, cron jobs, curl, notebooks, tests) can use them without an MCP library.
+
+Both protocols share a single service layer — `create_wallet` (MCP tool) and `POST /api/v1/hank/wallet/create` (REST endpoint) call the same Python function. No duplicated business logic.
 
 Hank is single-user, local-by-default, deployable to GCP Cloud Run for the workshop demo. It holds wallet keys locally (encrypted), registers APScheduler cron jobs at strategy activation, and logs every evaluation and trade to local SQLite.
+
+### Deployment modes
+
+| Mode | State persistence | Use case |
+|------|-------------------|----------|
+| **Local** | `hank.db` in user's filesystem — persists across restarts | Daily use, development |
+| **Cloud Run (demo)** | `hank.db` in ephemeral container filesystem — **wiped on every redeploy** | Workshop demo, fresh state each session |
+| **Cloud Run (persistent)** | **Not v1.** Requires swapping SQLite for Cloud SQL or mounting a GCS volume | Future |
+
+**Workshop deploy is demo-only.** If a user deploys their live bot to Cloud Run and redeploys, all wallets/strategies/trade history are lost. The encrypted wallet file is local-only by design.
 
 ## Access Tiers
 
@@ -77,7 +93,11 @@ Create + encrypt + store a wallet locally.
 }
 ```
 
-Note: The private key / seed phrase is shown **once** in the response (chat display), then encrypted to disk. Never retrievable via API after creation.
+**Security warning returned in `warning` field and also logged to stdout:**
+
+> The seed phrase is shown **once** in the response, then encrypted to disk. Never retrievable via API after creation.
+>
+> ⚠️ **Important:** the seed phrase will appear in your chat transcript, which Claude Code writes to disk under `~/.claude/projects/.../*.jsonl`. If you do not want the seed phrase persisted there, (1) copy it to a secure location, (2) delete the corresponding session transcript file, and (3) back it up offline (paper, hardware wallet, password manager). Never screenshot without securing the image.
 
 **Errors:** 400 `VALIDATION_ERROR`, 409 `WALLET_ALREADY_EXISTS`, 502 `SDK_ERROR`.
 
@@ -261,17 +281,31 @@ List strategies with optional status filter.
 Full strategy details.
 
 #### `PATCH /api/v1/hank/strategies/{id}/status`
-Status transitions. **Requires `confirm: true` for live mode.**
+**Single source of truth for strategy lifecycle.** This is the only way to activate, deactivate, or archive a strategy. Side effects (register/cancel cron jobs, allocate/release funds) are driven by the status transition.
 
 **Request:**
 ```json
 {
   "status": "string — draft | inactive | paper | live | archived",
-  "confirm": "boolean — required for live, stop, or withdraw"
+  "confirm": "boolean — required when activating to live or deactivating a live strategy",
+  "allocation": {
+    "wallet_address": "string — required when transitioning to live",
+    "token": "string — token address or symbol",
+    "amount": "number"
+  }
 }
 ```
 
-Valid transitions: `draft → inactive`, `inactive → paper`, `paper → live`, `paper → inactive`, `live → inactive`, `* → archived`. Activating (paper or live) registers a cron job; deactivating cancels it.
+Valid transitions: `draft → inactive`, `inactive → paper`, `inactive → live`, `paper → live`, `paper → inactive`, `live → inactive`, `* → archived`.
+
+Side effects by target status:
+- `paper`: register APScheduler cron job keyed to strategy timeframe. Allocation field ignored.
+- `live`: require `confirm: true` AND `allocation` block. Record allocation in local DB. Register cron job.
+- `inactive` (from live): require `confirm: true`. Cancel cron job. Release allocation (mark `active=false`, set `released_at`).
+- `inactive` (from paper): cancel cron job. No allocation change.
+- `archived`: cancel any running cron job. Release allocation if active.
+
+**Errors:** 400 `STRATEGY_INVALID_STATUS_TRANSITION`, 400 `CONFIRMATION_REQUIRED`, 400 `ALLOCATION_INSUFFICIENT`, 404 `WALLET_NOT_FOUND`.
 
 #### `POST /api/v1/hank/strategies/{id}/backtest`
 **Request:**
@@ -284,30 +318,6 @@ Valid transitions: `draft → inactive`, `inactive → paper`, `paper → live`,
 }
 ```
 **Response:** Full backtest metrics + trade history.
-
-#### `POST /api/v1/hank/strategies/{id}/deploy`
-Shortcut: PATCH status to paper or live + register cron job + record allocation (live only).
-
-**Request:**
-```json
-{
-  "mode": "string — paper | live",
-  "wallet_address": "string — required for live",
-  "allocation_amount": "number — required for live",
-  "allocation_token": "string — required for live",
-  "confirm": "boolean — must be true for live"
-}
-```
-
-#### `POST /api/v1/hank/strategies/{id}/stop`
-Cancel cron job, release allocation, set status to inactive.
-
-**Request:**
-```json
-{
-  "confirm": "boolean — must be true if strategy was live"
-}
-```
 
 #### `POST /api/v1/hank/strategies/{id}/evaluate`
 Manually trigger a single evaluation tick (for debugging/power users). Same code path the cron job runs.
@@ -339,46 +349,55 @@ Glossary term lookup with backlinks.
 
 ## MCP Tools
 
-Every REST endpoint has a mirrored MCP tool. Naming: `hank_<verb>_<resource>` (e.g., `hank_create_strategy_autonomous`, `hank_list_trades`, `hank_get_market_data`). Tool descriptions include parameters, return shapes, and access tier. All tools enforce the same auth as their REST counterparts (via `X-API-Key` in the MCP session).
+Every REST endpoint has a mirrored MCP tool with identical semantics. Tool names use plain `verb_resource` form (e.g. `create_strategy_autonomous`, `list_trades`, `get_market_data`) — no `hank_` prefix; the MCP server namespace is enough.
 
-Full tool list (28 tools):
+Tool descriptions include parameters, return shapes, and access tier. All tools enforce the same auth as their REST counterparts.
+
+### v1 scope — core vs nice-to-have
+
+**Core (must work for a demoable trading bot, ~22 tools):**
 
 | Category | Tool | REST endpoint |
 |----------|------|---------------|
-| Discovery | `hank_status` | `GET /status` |
-| Discovery | `hank_list_tools` | `GET /tools` |
-| Wallet | `hank_create_wallet` | `POST /wallet/create` |
-| Wallet | `hank_list_wallets` | `GET /wallet/list` |
-| Wallet | `hank_get_balances` | `GET /wallet/{a}/balances` |
-| Wallet | `hank_get_portfolio` | `GET /wallet/{a}/portfolio` |
-| Wallet | `hank_get_history` | `GET /wallet/{a}/history` |
-| DEX | `hank_list_dex_venues` | `GET /dex/venues` |
-| DEX | `hank_list_dex_pairs` | `GET /dex/pairs` |
-| DEX | `hank_get_swap_quote` | `POST /dex/quote` |
-| DEX | `hank_execute_swap` | `POST /dex/swap` |
-| Market | `hank_get_ohlcv` | `GET /market/ohlcv` |
-| Market | `hank_get_market_data` | `GET /market/data` |
-| Market | `hank_get_trending` | `GET /market/trending` |
-| Market | `hank_get_global_market` | `GET /market/global` |
-| On-chain | `hank_get_smart_money` | `GET /on-chain/smart-money` |
-| On-chain | `hank_get_whale_activity` | `GET /on-chain/whale-activity` |
-| On-chain | `hank_get_token_holders` | `GET /on-chain/token-holders/{s}` |
-| Signals | `hank_list_signals` | `GET /signals` |
-| Signals | `hank_get_signal` | `GET /signals/{name}` |
-| Strategy | `hank_create_strategy_autonomous` | `POST /strategies/autonomous` |
-| Strategy | `hank_create_strategy_manual` | `POST /strategies/manual` |
-| Strategy | `hank_list_strategies` | `GET /strategies` |
-| Strategy | `hank_get_strategy` | `GET /strategies/{id}` |
-| Strategy | `hank_update_strategy_status` | `PATCH /strategies/{id}/status` |
-| Strategy | `hank_backtest_strategy` | `POST /strategies/{id}/backtest` |
-| Strategy | `hank_deploy_strategy` | `POST /strategies/{id}/deploy` |
-| Strategy | `hank_stop_strategy` | `POST /strategies/{id}/stop` |
-| Strategy | `hank_evaluate_strategy` | `POST /strategies/{id}/evaluate` |
-| Logs | `hank_list_evaluations` | `GET /strategies/{id}/evaluations` |
-| Logs | `hank_list_trades` | `GET /strategies/{id}/trades` |
-| Logs | `hank_list_all_trades` | `GET /trades` |
-| KB | `hank_kb_search` | `GET /kb/search` |
-| KB | `hank_kb_glossary` | `GET /kb/glossary/{term}` |
+| Discovery | `status` | `GET /status` |
+| Discovery | `list_tools` | `GET /tools` |
+| Wallet | `create_wallet` | `POST /wallet/create` |
+| Wallet | `list_wallets` | `GET /wallet/list` |
+| Wallet | `get_balances` | `GET /wallet/{a}/balances` |
+| DEX | `list_dex_venues` | `GET /dex/venues` |
+| DEX | `get_swap_quote` | `POST /dex/quote` |
+| DEX | `execute_swap` | `POST /dex/swap` |
+| Market | `get_ohlcv` | `GET /market/ohlcv` |
+| Market | `get_market_data` | `GET /market/data` |
+| Signals | `list_signals` | `GET /signals` |
+| Strategy | `create_strategy_autonomous` | `POST /strategies/autonomous` |
+| Strategy | `create_strategy_manual` | `POST /strategies/manual` |
+| Strategy | `list_strategies` | `GET /strategies` |
+| Strategy | `get_strategy` | `GET /strategies/{id}` |
+| Strategy | `update_strategy_status` | `PATCH /strategies/{id}/status` |
+| Strategy | `backtest_strategy` | `POST /strategies/{id}/backtest` |
+| Strategy | `evaluate_strategy` | `POST /strategies/{id}/evaluate` |
+| Logs | `list_evaluations` | `GET /strategies/{id}/evaluations` |
+| Logs | `list_trades` | `GET /strategies/{id}/trades` |
+| Logs | `list_all_trades` | `GET /trades` |
+| KB | `kb_search` | `GET /kb/search` |
+
+**Nice-to-have (extend after core ships):**
+
+| Category | Tool | REST endpoint |
+|----------|------|---------------|
+| Wallet | `get_portfolio` | `GET /wallet/{a}/portfolio` |
+| Wallet | `get_history` | `GET /wallet/{a}/history` |
+| DEX | `list_dex_pairs` | `GET /dex/pairs` |
+| Market | `get_trending` | `GET /market/trending` |
+| Market | `get_global_market` | `GET /market/global` |
+| On-chain | `get_smart_money` | `GET /on-chain/smart-money` |
+| On-chain | `get_whale_activity` | `GET /on-chain/whale-activity` |
+| On-chain | `get_token_holders` | `GET /on-chain/token-holders/{s}` |
+| Signals | `get_signal` | `GET /signals/{name}` |
+| KB | `kb_glossary` | `GET /kb/glossary/{term}` |
+
+Cut list rationale: the core 22 are enough to demo "autonomously create, backtest, deploy, and execute a strategy" end-to-end. The 10 nice-to-haves are research/analytics surface that the user can reach via other Mangrove tooling if needed.
 
 ---
 
@@ -707,7 +726,24 @@ All errors carry a `correlation_id` for cross-referencing against Hank's logs.
 3. Middleware validates against `HANK_API_KEY`; rejects with 401 if missing or invalid.
 4. Free tier endpoints bypass the middleware.
 
-**MCP auth:** Claude Code's MCP client sends the key as a header when establishing the Streamable HTTP connection. Hank's MCP server rejects tool calls without a valid key (except discovery tools).
+**MCP auth:** MCP is served over Streamable HTTP transport. The MCP client (Claude Code, Claude Desktop, custom agent) sends the API key as a standard HTTP header on every request to `/mcp`.
+
+Client-side configuration example (`.mcp.json` in a Claude Code project):
+```json
+{
+  "mcpServers": {
+    "hank": {
+      "transport": "http",
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "X-API-Key": "${HANK_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+Server-side, Hank's FastAPI middleware inspects `X-API-Key` identically for REST and MCP requests — the MCP mount at `/mcp` is just another FastAPI route group. If the key is missing or invalid, the MCP tool call returns an MCP-level error with `code: AUTH_INVALID_API_KEY` (mapped to 401 for REST). Discovery tools (`status`, `list_tools`) bypass auth.
 
 **Storage:** No user accounts, no sessions, no tokens. Single shared secret per deployment.
 
@@ -887,6 +923,6 @@ Every user story maps to at least one endpoint.
 | US-13 list/view strategies | `GET /strategies`, `GET /strategies/{id}` |
 | US-14 update status | `PATCH /strategies/{id}/status` |
 | US-15 backtest | `POST /strategies/{id}/backtest` |
-| US-16 automated eval loop | `POST /strategies/{id}/deploy`, cron job + `POST /strategies/{id}/evaluate` |
-| US-17 deposit/withdraw | `POST /strategies/{id}/deploy`, `POST /strategies/{id}/stop` |
+| US-16 automated eval loop | `PATCH /strategies/{id}/status` (activates cron) + `POST /strategies/{id}/evaluate` (manual tick) |
+| US-17 deposit/withdraw | `PATCH /strategies/{id}/status` with `allocation` block (deposit on → live) or confirm (withdraw on → inactive) |
 | US-18 KB | `GET /kb/search`, `GET /kb/glossary/{term}` |

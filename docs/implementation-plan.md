@@ -186,7 +186,7 @@ Goal: the agent can hold wallets and write to its log tables. After this phase, 
   - For chain=`evm`: call `mangrovemarkets_client().wallet.create(...)` to get address + secret, encrypt secret, INSERT into `wallets`.
   - Return the result with the seed phrase included exactly once + the security warning from the spec.
 - [ ] **Step 4:** implement `list_wallets() -> list[WalletListItem]` (no secrets returned).
-- [ ] **Step 5:** implement `sign(unsigned_tx: dict, wallet_address: str) -> str` — load encrypted seed, decrypt, sign via the SDK's signing helper or web3.py, zero the secret bytes, return signed tx.
+- [ ] **Step 5:** implement `sign(unsigned_tx: dict, wallet_address: str) -> str` — load encrypted seed, decrypt in memory only, sign via web3.py (`eth_account`), zero the secret bytes immediately, return the signed hex string. **The SDK never receives the private key. It only receives `signed_tx` strings for broadcast.**
 - [ ] **Step 6:** unit tests:
   - `test_create_wallet_evm` — create, assert row exists, secret is encrypted, seed phrase returned.
   - `test_create_wallet_xrpl_raises` — assert `ChainNotSupportedInV1`.
@@ -325,27 +325,50 @@ Goal: the autonomous strategy creation flow + cron evaluation work end-to-end ag
 **Agent:** backend-developer
 **Files:**
 - Create: `server/src/services/order_executor.py`
+- Create: `server/src/shared/explorer.py` (chain_id → block explorer URL mapping)
 - Create: `server/tests/unit/test_order_executor.py`
+- Create: `server/tests/unit/test_explorer.py`
 - Create: `server/tests/integration/test_order_executor_live.py`
 
-- [ ] **Step 1:** define `execute_one(intent: OrderIntent, mode: Literal["paper", "live"], wallet_address: str | None = None) -> Trade`. For paper: skip to step 3. For live: continue.
-- [ ] **Step 2 (live mode):** implement the full 6-step swap from the spec:
+**Signing boundary:** All signing happens client-side inside `wallet_manager.sign()`. The `mangrovemarkets` SDK is handed already-signed transaction strings for broadcast; it never sees the seed phrase, private key, or any plaintext secret material.
+
+- [ ] **Step 1:** create `shared/explorer.py` with `explorer_url(chain_id: int, tx_hash: str) -> str | None`. Mapping:
+  ```python
+  EXPLORERS = {
+      1:     "https://etherscan.io/tx/",
+      8453:  "https://basescan.org/tx/",
+      84532: "https://sepolia.basescan.org/tx/",
+      42161: "https://arbiscan.io/tx/",
+      137:   "https://polygonscan.com/tx/",
+      10:    "https://optimistic.etherscan.io/tx/",
+      56:    "https://bscscan.com/tx/",
+      43114: "https://snowtrace.io/tx/",
+      324:   "https://explorer.zksync.io/tx/",
+      100:   "https://gnosisscan.io/tx/",
+      59144: "https://lineascan.build/tx/",
+  }
+  ```
+  Unit test: each chain_id maps to the right base URL + tx_hash.
+- [ ] **Step 2:** define `execute_one(intent: OrderIntent, mode: Literal["paper", "live"], wallet_address: str | None = None) -> Trade`. For paper: skip to step 4. For live: continue.
+- [ ] **Step 3 (live mode):** implement the full 6-step swap from the spec:
   1. `dex.get_quote(input_token, output_token, amount, chain_id)` → Quote
   2. `dex.approve_token(...)` → may return None (already approved)
-  3. If approval returned: `wallet_manager.sign(approval_tx, wallet_address)` → signed → `dex.broadcast(signed)` → poll `dex.tx_status` until confirmed
+  3. If approval returned: call `wallet_manager.sign(approval_tx, wallet_address)` (client-side sign, SDK never sees secret) → pass `signed_tx` to `dex.broadcast(signed_tx)` → poll `dex.tx_status` until confirmed
   4. `dex.prepare_swap(quote_id, wallet_address)` → UnsignedTx
-  5. `wallet_manager.sign(swap_tx, wallet_address)` → signed → `dex.broadcast(signed)` → poll `dex.tx_status`
-  6. Build `Trade` with `mode="live"`, `tx_hash`, fill amounts/prices/fees
-- [ ] **Step 3 (paper mode):** fetch current price via `mangroveai_client().crypto_assets.get_market_data(intent.symbol)`, build a `Trade` with `mode="paper"`, `status="simulated"`, `tx_hash=None`, fill at mid/mark price.
-- [ ] **Step 4:** call `trade_log.log_trade(trade)` and `trade_log.update_position(...)` based on intent type (enter/exit). Return the `Trade`.
-- [ ] **Step 5:** add `execute_many(intents, mode, wallet_address) -> list[Trade]` — sequential loop, each wrapped in try/except so one failure doesn't stop the batch.
-- [ ] **Step 6:** unit tests with mocked SDK:
-  - `test_paper_simulates_at_mark_price` — no SDK swap calls made
+  5. `wallet_manager.sign(swap_tx, wallet_address)` (client-side sign) → `dex.broadcast(signed_tx)` → poll `dex.tx_status`
+  6. Build `Trade` with `mode="live"`, `tx_hash`, `explorer_url=explorer_url(chain_id, tx_hash)`, `approval_tx_hash`, fill amounts/prices/fees
+- [ ] **Step 4 (paper mode):** fetch current price via `mangroveai_client().crypto_assets.get_market_data(intent.symbol)`, build a `Trade` with `mode="paper"`, `status="simulated"`, `tx_hash=None`, `explorer_url=None`, fill at mid/mark price.
+- [ ] **Step 5:** call `trade_log.log_trade(trade)` and `trade_log.update_position(...)` based on intent type (enter/exit). Return the `Trade`.
+- [ ] **Step 6:** add `execute_many(intents, mode, wallet_address) -> list[Trade]` — sequential loop, each wrapped in try/except so one failure doesn't stop the batch.
+- [ ] **Step 7:** unit tests with mocked SDK:
+  - `test_paper_simulates_at_mark_price` — no SDK swap calls made, no signing
   - `test_live_skips_approval_when_none` — no approval signed
-  - `test_live_full_flow_with_approval` — both txs signed and broadcast
+  - `test_live_full_flow_with_approval` — both txs signed client-side; SDK receives only signed bytes
+  - `test_live_trade_includes_explorer_url` — chain_id 8453 → url starts with `https://basescan.org/tx/`
   - `test_failure_in_one_does_not_block_others` (for execute_many)
-- [ ] **Step 7:** integration test against Base testnet (Chain ID 84532) with a funded testnet wallet — actually swap a small amount and verify the trade row.
-- [ ] **Step 8:** commit: `feat(executor): single swap path for cron-driven and user-initiated trades`.
+  - `test_sdk_never_receives_plaintext_key` — inspect all mock SDK call args, assert no seed phrase or private key present
+- [ ] **Step 8:** integration test against Base Sepolia (Chain ID 84532) with a funded testnet wallet — actually swap a small amount and verify the trade row includes the explorer URL.
+- [ ] **Step 9:** commit: `feat(executor): single swap path with client-side signing and explorer URLs`.
 
 **Acceptance:** Paper mode logs simulated trades; live mode (testnet) completes a real swap and writes a Trade row with the tx hash.
 
@@ -397,6 +420,8 @@ Goal: the autonomous strategy creation flow + cron evaluation work end-to-end ag
 ## Phase 4 — API Layer
 
 Goal: every spec endpoint and MCP tool is wired up. After this phase, the agent is feature-complete from the user's perspective.
+
+**Service-layer discipline (per architecture):** Tasks 4.4 and parts of 4.2/4.3 create **routes only** — no wrapper service modules. Routes for market data, on-chain, signals, KB, portfolio, and DEX read operations (venues, pairs, quote) import the SDK singletons from `shared/clients/mangrove.py` and call the SDK methods inline. The six pass-through service modules we decided against (`signal_service`, `market_data`, `on_chain`, `kb_service`, `dex_service`, `portfolio_service`) are **not** created in this phase or any other. If the plan ever tempts you to create one, stop — routes call the SDK directly.
 
 ### Task 4.1 — Discovery routes
 
@@ -454,11 +479,13 @@ Goal: every spec endpoint and MCP tool is wired up. After this phase, the agent 
   - Require `confirm=True` else raise `ConfirmationRequired`
   - Build `OrderIntent` from request body
   - Call `order_executor.execute_one(intent, mode="live", wallet_address=req.wallet_address)`
-  - Return `SwapResult` populated from the returned `Trade`
-- [ ] **Step 3:** integration tests including the `confirm=False` rejection path.
-- [ ] **Step 4:** commit: `feat(api): DEX routes (venues, pairs, quote, swap)`.
+  - Return `SwapResult` populated from the returned `Trade` — **including `tx_hash`, `approval_tx_hash` (nullable), and `explorer_url`** so the user can click through to the block explorer
+  - All signing stays inside `wallet_manager.sign()` on the client side; the SDK receives only signed tx bytes
+- [ ] **Step 3:** **Spec sync:** the `SwapResult` response shape gains three fields — `tx_hash`, `approval_tx_hash` (nullable), `explorer_url` (nullable for paper). Update `docs/specification.md` `POST /dex/swap` response shape accordingly as part of this task, in the same commit.
+- [ ] **Step 4:** integration tests including the `confirm=False` rejection path and an assertion that the response includes `explorer_url` for live swaps.
+- [ ] **Step 5:** commit: `feat(api): DEX routes (venues, pairs, quote, swap with explorer URL)`.
 
-**Acceptance:** End-to-end swap (testnet) via `POST /dex/swap` works.
+**Acceptance:** End-to-end swap (testnet) via `POST /dex/swap` works. Response includes a clickable block explorer URL.
 
 ---
 
@@ -593,22 +620,62 @@ Goal: prove the full system works end-to-end.
 
 ---
 
-### Task 5.3 — E2E live swap on testnet
+### Task 5.3 — E2E live swap on Base Sepolia testnet
 
 **Agent:** test-engineer
 **Files:**
-- Create: `server/tests/e2e/test_live_swap.py`
+- Create: `server/tests/e2e/test_live_swap_testnet.py`
+- Create: `docs/testing-testnet.md` (funding + faucet runbook)
 
-- [ ] **Step 1:** test scenario:
-  1. Create EVM wallet on Base testnet (Chain ID 84532)
-  2. Pre-fund manually (test fixture documents the funded address; runner must seed before the test)
-  3. POST `/dex/swap` with `confirm=true` for a tiny amount (e.g., 0.001 USDC → ETH)
-  4. Assert response includes `tx_hash` and `status=confirmed`
-  5. Query the trades table — assert the row matches
-- [ ] **Step 2:** Skip if `SKIP_E2E=1` or `BASE_TESTNET_PRIVATE_KEY` not set.
-- [ ] **Step 3:** commit: `test(e2e): live DEX swap on Base testnet`.
+**Chain:** Base Sepolia (Chain ID `84532`). Explorer: `https://sepolia.basescan.org/`.
 
-**Acceptance:** Live execution path works against a real chain.
+**Faucets (document in `docs/testing-testnet.md`):**
+- Sepolia ETH faucet: `https://www.alchemy.com/faucets/base-sepolia`
+- USDC on Base Sepolia (test token): deploy locally via the template's fixtures OR use Circle's testnet faucet `https://faucet.circle.com/` (select Base Sepolia)
+- Expected funded balance before test: ~0.01 Sepolia ETH for gas + ~5 test USDC for swap input
+
+- [ ] **Step 1:** write `docs/testing-testnet.md` with: chain info (name, ID, RPC URL, explorer), faucet links, step-by-step funding runbook (create wallet via `POST /wallet/create` with `chain=evm, network=testnet, chain_id=84532`, copy address shown once, visit both faucets, wait for confirmations, run test).
+- [ ] **Step 2:** test scenario in `test_live_swap_testnet.py`:
+  1. Fixture reads `BASE_SEPOLIA_WALLET_ADDRESS` env var (the pre-funded wallet address, created in advance and persisted in the agent's DB).
+  2. `POST /dex/swap` with: `input_token=<USDC on Sepolia>`, `output_token=<WETH on Sepolia>`, `amount=1.0` (1 test USDC), `chain_id=84532`, `wallet_address=<fixture>`, `confirm=true`.
+  3. Assert response includes `tx_hash`, `status="confirmed"`, `explorer_url` starting with `https://sepolia.basescan.org/tx/`.
+  4. Fetch the URL with `httpx` (lightweight sanity check the explorer page exists — HTTP 200) — does not assert page contents.
+  5. Query `/trades?limit=1` — assert the row matches (tx_hash, mode=live, status=confirmed, explorer_url populated).
+- [ ] **Step 3:** Skip test if `SKIP_E2E=1` or `BASE_SEPOLIA_WALLET_ADDRESS` not set.
+- [ ] **Step 4:** commit: `test(e2e): live DEX swap on Base Sepolia testnet with explorer verification`.
+
+**Acceptance:** Test passes against Base Sepolia. The explorer URL returned by the agent actually resolves to the transaction page. **This task must pass before Task 5.4 runs on real mainnet.**
+
+---
+
+### Task 5.4 — E2E live swap on Base mainnet (real funds)
+
+**Agent:** test-engineer
+**Files:**
+- Create: `server/tests/e2e/test_live_swap_mainnet.py`
+- Create: `docs/testing-mainnet.md` (pre-flight checklist)
+
+**Chain:** Base mainnet (Chain ID `8453`). Explorer: `https://basescan.org/`.
+
+**Pre-flight (all must be true before running this test):**
+- Task 5.3 Base Sepolia test passes cleanly
+- `ENABLE_MAINNET_TEST=1` set explicitly (opt-in — default is skip)
+- `BASE_MAINNET_WALLET_ADDRESS` set to a wallet with ≥ $2 USDC + ≥ $1 worth of ETH for gas
+- User has verified the wallet address in the agent's DB matches their expectation
+
+**Budget for this test:** ≤ $1 USDC swap size. Gas ≤ $0.50. Total exposure ≤ $1.50 per run.
+
+- [ ] **Step 1:** write `docs/testing-mainnet.md` with the pre-flight checklist above, "this spends real money" warning in bold, recovery plan if the tx gets stuck (revoke approval via `https://revoke.cash`), explorer link format.
+- [ ] **Step 2:** test scenario:
+  1. Fail-fast if `ENABLE_MAINNET_TEST != "1"` or `BASE_MAINNET_WALLET_ADDRESS` unset.
+  2. `POST /dex/swap` with: `input_token=<USDC mainnet>`, `output_token=<WETH mainnet>`, `amount=1.0`, `chain_id=8453`, `wallet_address=<fixture>`, `confirm=true`, `slippage=0.5`.
+  3. Assert `tx_hash` present, `status="confirmed"`, `explorer_url` starts with `https://basescan.org/tx/`.
+  4. Fetch the explorer URL — HTTP 200.
+  5. Query `/trades` — assert the row has the real tx_hash and USD-denominated fills.
+- [ ] **Step 3:** Document the run in `docs/testing-mainnet.md` — paste the resulting explorer URL as "last verified mainnet swap" so future runs have a reference.
+- [ ] **Step 4:** commit: `test(e2e): live DEX swap on Base mainnet (opt-in, $1 budget)`.
+
+**Acceptance:** One successful real-money swap on Base mainnet. Trade row persisted. Explorer URL resolves. Task 5.3 must pass first.
 
 ---
 
@@ -616,20 +683,47 @@ Goal: prove the full system works end-to-end.
 
 Goal: anyone cloning the repo on workshop day can `docker compose up`, hand Claude Code an `.mcp.json`, and have a working trading bot.
 
-### Task 6.1 — Docs polish
+### Task 6.1 — README + verification of the 5-minute quick start
 
 **Agent:** backend-developer
 **Files:**
 - Modify: `README.md`
 - Create: `.mcp.json.example`
+- Create: `scripts/verify_quickstart.sh`
 - Modify: `docs/configuration.md` (refresh to match the agent's actual config)
 
-- [ ] **Step 1:** rewrite the top of `README.md` for defi-agent: what it is, quick start (3 commands), where to put your API key, link to spec/architecture.
-- [ ] **Step 2:** create `.mcp.json.example` with the Streamable HTTP transport config from the spec.
-- [ ] **Step 3:** refresh `docs/configuration.md` to match the v1 config keys.
-- [ ] **Step 4:** commit: `docs: README + .mcp.json example for workshop`.
+**Acceptance criterion for this task: a fresh clone on a clean machine produces a working agent in under 5 minutes, verified by a scripted cold run.**
 
-**Acceptance:** A new user can read the README and be running in <5 min.
+- [ ] **Step 1:** rewrite `README.md` with a **numbered, copy-pasteable quick start** (everything between the numbered steps must be a literal command or config paste — no prose like "then edit your config"):
+  1. `git clone <repo> && cd app-in-a-box`
+  2. `cp server/src/config/local-example-config.json server/src/config/local-config.json`
+  3. `sed -i '' 's/MANGROVE_API_KEY_PLACEHOLDER/<your key>/' server/src/config/local-config.json` (or manual edit — document both)
+  4. `docker compose up -d --build`
+  5. `curl http://localhost:8080/health` — expect 200
+  6. `curl -H "X-API-Key: local-dev-key" http://localhost:8080/api/v1/agent/status` — expect JSON with `version`, `wallets_count: 0`
+  7. `cp .mcp.json.example .mcp.json` in any Claude Code project to connect
+- [ ] **Step 2:** explicit scope section in README: "v1 supports EVM chains only (Ethereum, Base, Arbitrum, Polygon, Optimism, BNB, Avalanche, zkSync, Gnosis, Linea). XRPL wallet creation returns a 501 in v1. Solana is not supported."
+- [ ] **Step 3:** link to `docs/testing-testnet.md` (Base Sepolia runbook) and `docs/testing-mainnet.md` (real-funds pre-flight) from the README under a "Testing" section.
+- [ ] **Step 4:** create `.mcp.json.example`:
+  ```json
+  {
+    "mcpServers": {
+      "defi-agent": {
+        "transport": "http",
+        "url": "http://localhost:8080/mcp",
+        "headers": {
+          "X-API-Key": "local-dev-key"
+        }
+      }
+    }
+  }
+  ```
+- [ ] **Step 5:** create `scripts/verify_quickstart.sh` — a bash script that runs every command from the README quick start against a fresh clone in a tempdir, captures timings, and fails if any step errors OR if total elapsed > 300 seconds. The script is the **executable form** of the README.
+- [ ] **Step 6:** run `scripts/verify_quickstart.sh` yourself. If it fails or takes longer than 5 minutes, fix the README or the container startup path until it passes.
+- [ ] **Step 7:** refresh `docs/configuration.md` to match the v1 config keys.
+- [ ] **Step 8:** commit: `docs: README + verified quick start + .mcp.json example`.
+
+**Acceptance:** `scripts/verify_quickstart.sh` exits 0 in under 300 seconds on a cold clone.
 
 ---
 
@@ -665,7 +759,7 @@ Goal: anyone cloning the repo on workshop day can `docker compose up`, hand Clau
 
 ## Summary
 
-**Total: 22 tasks across 6 phases.**
+**Total: 23 tasks across 6 phases.**
 
 | Phase | Tasks | Parallelizable? |
 |-------|-------|-----------------|
@@ -673,16 +767,28 @@ Goal: anyone cloning the repo on workshop day can `docker compose up`, hand Clau
 | 2. Core infrastructure | 4 | 2.2/2.3/2.4 parallel after 2.1 |
 | 3. Strategy pipeline | 4 | 3.1/3.2 parallel after Phase 2; 3.3 needs 2.1; 3.4 needs all of Phase 3 |
 | 4. API layer | 7 | 4.1–4.6 parallel after Phase 3; 4.7 last |
-| 5. Verification | 3 | Sequential |
+| 5. Verification | 4 | Sequential; 5.4 gated by 5.3 and `ENABLE_MAINNET_TEST=1` |
 | 6. Polish | 3 | Sequential |
 
-**Critical path (sequential):** 1.1 → 1.2 → 1.3 → 1.6 → 2.1 → 3.3 → 3.4 → 4.7 → 5.x → 6.x.
+**Critical path (sequential):** 1.1 → 1.2 → 1.3 → 1.6 → 2.1 → 3.3 → 3.4 → 4.7 → 5.1 → 5.2 → 5.3 → 5.4 → 6.x.
 
 **Agent allocation:**
 - backend-developer: 16 tasks
-- test-engineer: 3 tasks
+- test-engineer: 4 tasks (5.1 smoke + 5.2 paper E2E + 5.3 Sepolia E2E + 5.4 mainnet E2E)
 - devops-engineer: 1 task
 - code-review: 1 task (final pass)
 - diagram-agent: not needed (diagrams already approved in arch phase)
 
-**Definition of done for v1:** all 22 tasks complete + paper lifecycle E2E green + live swap E2E green + `docker compose up` produces a working agent + README quick-start works.
+**Definition of done for v1:**
+1. All 23 tasks complete.
+2. Paper lifecycle E2E green (Task 5.2).
+3. Base Sepolia testnet live swap E2E green with explorer URL verified (Task 5.3).
+4. Base mainnet real-funds swap verified once, tx hash pasted in `docs/testing-mainnet.md` (Task 5.4).
+5. `docker compose up` produces a working agent (Task 6.2).
+6. `scripts/verify_quickstart.sh` exits 0 in under 300 seconds on a cold clone (Task 6.1).
+
+**Architecture discipline reminders (flagged during plan audit):**
+- All signing is **client-side** in `wallet_manager.sign()`. The `mangrovemarkets` SDK receives only signed transaction bytes; it never sees seed phrases or private keys. Every task touching the DEX swap flow (2.1, 3.3, 4.3) carries this note.
+- **No pass-through service modules exist or should be created.** Routes for market/on-chain/signals/KB/portfolio/dex-read-ops call the SDK clients directly from `shared/clients/mangrove.py`. The 8 services that DO exist (wallet_manager, strategy_service, candidate_generator, backtest_service, order_executor, scheduler_service, trade_log, allocation_service) all add orchestration the SDK doesn't provide.
+- **XRPL is stubbed (501)**, not implemented. Users creating an XRPL wallet get a clear error. README calls this out.
+- **Mainnet testing is opt-in and capped at $1 per run** — pre-flight checklist in `docs/testing-mainnet.md`.

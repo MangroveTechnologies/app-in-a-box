@@ -910,7 +910,7 @@ The 8 services that stay:
 | Module | Responsibility |
 |--------|---------------|
 | `services/wallet_manager.py` | Key gen, Fernet encryption, local signing of unsigned txs from the SDK |
-| `services/strategy_service.py` | Cron-tick orchestration: fetch market data, call `mangroveai.execution.evaluate()`, dispatch returned orders to `order_executor`. Strategy CRUD against `mangroveai.strategies` + local cache writes. No local signal evaluation or risk logic. |
+| `services/strategy_service.py` | Cron-tick orchestration: call `mangroveai.execution.evaluate(strategy_id)` (SDK handles market data fetch + signal eval + risk gates internally), dispatch returned orders to `order_executor`. Strategy CRUD against `mangroveai.strategies` + local cache writes. No local signal evaluation or risk logic. |
 | `services/candidate_generator.py` | Autonomous: goal → 5–10 signal combos (deterministic heuristics over the `mangroveai.signals` catalog) |
 | `services/backtest_service.py` | Quick + full backtest orchestration; filter + rank by IRR |
 | `services/order_executor.py` | The single execution path for all DEX swaps. Takes an `OrderIntent` (from `strategy_service` for cron-driven trades, or built from a user request for the `POST /dex/swap` route). Orchestrates the full 6-step flow against `mangrovemarkets.dex` (quote → conditional approve → sign → broadcast → poll → prepare → sign → broadcast → poll). Branches paper vs live. |

@@ -100,26 +100,26 @@ Auth is enforced once at the boundary. The service layer is protocol-agnostic �
 
 ```mermaid
 flowchart LR
-    A[APScheduler<br/>cron tick] --> B[strategy_service]
-    B --> C[Fetch latest market data<br/>mangroveai.crypto_assets]
-    C --> D[mangroveai.execution.evaluate<br/>strategy_id + current data]
-    D --> E[SDK applies:<br/>signal eval, position sizing,<br/>risk gates, cooldowns,<br/>vol adjustment]
-    E --> F[OrderIntent array<br/>from SDK]
-    F --> G[order_executor]
-    G --> H{Strategy<br/>mode?}
-    H -->|paper| I[Simulate fill<br/>at mid/mark price]
-    H -->|live| J[DEX swap via<br/>mangrovemarkets SDK]
-    J --> K[Sign locally,<br/>broadcast, poll]
-    I --> L[trade_log]
-    K --> L
-    L --> M[(SQLite:<br/>evaluations, trades,<br/>positions)]
+    A[APScheduler<br/>cron tick] --> B[strategy_service.tick]
+    B --> C[mangroveai.execution.evaluate<br/>strategy_id only]
+    C --> D[SDK internally:<br/>fetches market data,<br/>applies signal eval,<br/>position sizing, risk gates,<br/>cooldowns, vol adjustment]
+    D --> E[OrderIntent array<br/>from SDK]
+    E --> F[order_executor]
+    F --> G{Strategy<br/>mode?}
+    G -->|paper| H[Simulate fill<br/>at mid/mark price]
+    G -->|live| I[DEX swap via<br/>mangrovemarkets SDK]
+    I --> J[Sign locally,<br/>broadcast, poll]
+    H --> K[trade_log]
+    J --> K
+    K --> L[(SQLite:<br/>evaluations, trades,<br/>positions)]
 ```
 
-**Critical:** the agent does not evaluate strategies locally. Signal evaluation, risk gates (`max_risk_per_trade`, `max_open_positions`, `max_trades_per_day`), position sizing, volatility adjustment, and cooldown enforcement all live in Mangrove's SDK (`mangroveai.execution.evaluate()`). The agent's job is:
-1. Fetch current market data
-2. Call the SDK evaluate endpoint
-3. Branch the returned `OrderIntent[]` to paper or live execution
-4. Log everything
+**Critical:** the agent does not evaluate strategies locally, and **does not fetch market data for evaluation** — `mangroveai.execution.evaluate(strategy_id)` takes a strategy ID only and handles everything internally: market data fetch, signal evaluation, risk gates (`max_risk_per_trade`, `max_open_positions`, `max_trades_per_day`), position sizing, volatility adjustment, and cooldown enforcement. The agent's job is:
+1. Call the SDK evaluate endpoint with just the strategy ID
+2. Branch the returned `OrderIntent[]` to paper or live execution
+3. Log everything
+
+The agent DOES fetch market data for a separate purpose: getting a mark price to simulate paper-mode fills inside `order_executor`. That's a different code path from evaluation.
 
 ---
 
@@ -215,11 +215,10 @@ sequenceDiagram
     participant DB as SQLite
 
     SCH->>SS: tick(strategy_id)
-    SS->>DB: load strategy
-    SS->>SDK: crypto_assets.get_ohlcv(asset, timeframe)
-    SDK-->>SS: current market data
-    SS->>SDK: execution.evaluate(strategy_id, market_data)
-    SDK-->>SS: [OrderIntent] (0..N, with risk gates already applied)
+    SS->>DB: load strategy (mangrove_id, mode, wallet_address)
+    SS->>SDK: execution.evaluate(mangrove_id, persist=mode==live)
+    Note over SDK: SDK internally fetches market data,<br/>applies signal eval, risk gates, sizing
+    SDK-->>SS: [OrderIntent] (0..N)
 
     alt order_intents empty
         SS->>TL: log evaluation (no_action)
@@ -426,7 +425,7 @@ graph TB
 Key properties:
 - **Routes never call SDKs directly.** Always through the service layer.
 - **MCP tools and REST routes call the same services.** Logic lives in one place.
-- **`strategy_service` is thin.** Loads strategy + market data, calls `mangroveai.execution.evaluate()`, dispatches returned orders to the executor. Does not evaluate signals, size positions, or enforce risk gates locally — those live in the SDK.
+- **`strategy_service` is thin.** Loads strategy from local cache, calls `mangroveai.execution.evaluate(strategy_id)`, dispatches returned orders to the executor. Does not fetch market data (SDK handles that), does not evaluate signals, does not size positions, does not enforce risk gates — all of that lives in the SDK.
 - **SDK clients are singletons** initialized at startup (`shared/clients/mangrove.py`), shared across services.
 
 ---

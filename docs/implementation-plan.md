@@ -457,12 +457,13 @@ Goal: the autonomous strategy creation flow + cron evaluation work end-to-end ag
   - On `→ inactive` or `→ archived`: cancel cron, release allocation if any
 - [ ] **Step 5:** implement `tick(strategy_id) -> Evaluation` — the cron callback. **Runs inside the scheduler threadpool; must never block the request path.** Every tick emits structured logs so external observers can see the fire-and-result sequence:
   1. Generate a `tick_id` (UUID), bind correlation_id to it, emit `strategy.tick.started` with `strategy_id`, `tick_id`, `timeframe`.
-  2. Load strategy from local cache.
-  3. Fetch latest market data via `mangroveai_client().crypto_assets.get_ohlcv(...)` — emit `sdk.call.started` / `sdk.call.completed` bracketing.
-  4. Call `mangroveai_client().execution.evaluate(strategy_mangrove_id, current_data)` → SDK response with OrderIntent[] (same bracketing).
-  5. If orders empty: persist evaluation with `status="ok"`, emit `strategy.tick.completed` with `order_count=0`, `duration_ms`.
-  6. If orders present: extract OrderIntents, dispatch to `order_executor.execute_many(intents, mode, wallet_address)`, persist evaluation with `sdk_response_json` verbatim, emit `strategy.tick.completed` with `order_count=N`, `duration_ms`.
-  7. On any exception: persist evaluation with `status="error"`, emit `strategy.tick.errored` with `exception` + `duration_ms`. **Never let the exception propagate out of the tick callback** — that would crash the scheduler worker.
+  2. Load strategy from local cache to get the `mangrove_id` + mode (`paper` or `live`) + wallet_address (live only).
+  3. Call `mangroveai_client().execution.evaluate(mangrove_id, persist=(mode == "live"))` — the SDK fetches its own market data and applies all signal evaluation, position sizing, and risk gates. Emit `sdk.call.started` / `sdk.call.completed` bracketing. The returned `EvaluateResult` contains any `OrderIntent[]` the strategy generated.
+  4. If order_intents empty: persist evaluation with `status="ok"`, emit `strategy.tick.completed` with `order_count=0`, `duration_ms`.
+  5. If order_intents present: dispatch to `order_executor.execute_many(intents, mode, wallet_address)`, persist evaluation with `sdk_response_json` verbatim, emit `strategy.tick.completed` with `order_count=N`, `duration_ms`.
+  6. On any exception: persist evaluation with `status="error"`, emit `strategy.tick.errored` with `exception` + `duration_ms`. **Never let the exception propagate out of the tick callback** — that would crash the scheduler worker.
+
+**Note on `persist`:** Mangrove's `evaluate(persist=True)` writes orders/positions/trades to Mangrove's own account records. For live mode we want that (keeps Mangrove's view consistent with ours). For paper mode we set `persist=False` so simulated runs don't pollute Mangrove's live history — the agent's local SQLite is the source of truth for paper trades.
 - [ ] **Step 6:** integration tests:
   - `test_create_autonomous_happy_path` — produces a StrategyDetail with generation_report
   - `test_create_autonomous_no_viable_candidates` — raises 422

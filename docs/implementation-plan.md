@@ -145,7 +145,57 @@ Goal: turn the app-in-a-box template into a defi-agent shell. After this phase, 
 
 ---
 
-### Task 1.6 — SQLite layer + migrations
+### Task 1.6 — Structured logging
+
+**Agent:** backend-developer
+**Files:**
+- Create: `server/src/shared/logging.py`
+- Modify: `server/requirements.txt` (add `structlog>=24`)
+- Modify: `server/src/app.py` (install logging config at startup)
+- Create: `server/tests/unit/test_logging.py`
+
+**Goal:** every log line is structured (JSON when `ENVIRONMENT != local`, pretty console when `local`), carries a `correlation_id`, and emits consistent event names so the user can grep/tail logs and see exactly what the agent is doing.
+
+- [ ] **Step 1:** add `structlog>=24` to `requirements.txt`.
+- [ ] **Step 2:** create `shared/logging.py`:
+  - `configure(env: str) -> None` — wires structlog with processors: `add_log_level`, `TimeStamper(fmt='iso', utc=True)`, `add_correlation_id` (custom), and a renderer that's `ConsoleRenderer` when `env=="local"` else `JSONRenderer`.
+  - `get_logger(name: str) -> BoundLogger`.
+  - `with_correlation_id(cid: str)` context manager that binds the id into the thread/contextvar so every subsequent log line in that scope carries it.
+- [ ] **Step 3:** add a FastAPI middleware that generates a `correlation_id` (UUID4) per request, binds it into the logging context, and returns it in the `X-Correlation-Id` response header. If the caller supplies `X-Correlation-Id`, use that instead.
+- [ ] **Step 4:** define the canonical event names the rest of the codebase will use (add to module docstring so subagents reuse them):
+  ```
+  # lifecycle
+  "app.startup", "app.shutdown", "db.migrated", "scheduler.started"
+  # auth
+  "auth.accepted", "auth.rejected"
+  # wallet
+  "wallet.created", "wallet.signed_tx"
+  # strategy
+  "strategy.created", "strategy.status_changed",
+  "strategy.tick.started", "strategy.tick.completed", "strategy.tick.errored"
+  # order execution
+  "order.executing", "order.live.signed", "order.live.broadcast",
+  "order.live.confirmed", "order.paper.simulated", "order.errored"
+  # scheduler
+  "scheduler.job.registered", "scheduler.job.cancelled", "scheduler.job.fired"
+  # sdk
+  "sdk.call.started", "sdk.call.completed", "sdk.call.errored"
+  ```
+  Every log emit uses one of these event names as the first positional arg, with structured fields as kwargs.
+- [ ] **Step 5:** wire `configure(app_config.ENVIRONMENT)` into the FastAPI lifespan startup. Emit `app.startup` with the app version.
+- [ ] **Step 6:** update `shared/errors.py` exception handler to log the error event (`AgentError` instances → `level=error`, event = error code lowercased) with the correlation_id.
+- [ ] **Step 7:** unit tests:
+  - `test_console_renderer_in_local` — log line is human-readable
+  - `test_json_renderer_in_prod` — log line is valid JSON with required keys (`event`, `level`, `timestamp`, `correlation_id`)
+  - `test_correlation_id_propagates` — bind an id, assert a downstream log carries it
+  - `test_request_middleware_injects_id` — send a request, assert the response header echoes back and any log emitted during the request is tagged
+- [ ] **Step 8:** commit: `feat(logging): structured JSON logging with correlation_id propagation`.
+
+**Acceptance:** `docker compose logs -f hank` shows readable lines locally and valid JSON in non-local environments. Every request has a `correlation_id` that can be traced through logs and returned in response headers.
+
+---
+
+### Task 1.7 — SQLite layer + migrations
 
 **Agent:** backend-developer
 **Files:**
@@ -159,10 +209,11 @@ Goal: turn the app-in-a-box template into a defi-agent shell. After this phase, 
 - [ ] **Step 2:** in `sqlite.py`, write `get_connection() -> sqlite3.Connection` that opens `app_config.DB_PATH` with `PRAGMA foreign_keys = ON`, `PRAGMA journal_mode = WAL`. Cache via `lru_cache`.
 - [ ] **Step 3:** add `init_db()` that runs all unapplied migrations in order. Track applied migrations in a `_migrations` table.
 - [ ] **Step 4:** call `init_db()` from FastAPI lifespan startup.
-- [ ] **Step 5:** integration test — point `DB_PATH` to a tmp file, call `init_db()`, then introspect each table via `PRAGMA table_info(<table>)` and assert columns match the spec.
-- [ ] **Step 6:** commit: `feat(db): SQLite connection + initial schema migration`.
+- [ ] **Step 5:** emit `db.migrated` log event with the list of applied migration filenames after `init_db()` completes.
+- [ ] **Step 6:** integration test — point `DB_PATH` to a tmp file, call `init_db()`, then introspect each table via `PRAGMA table_info(<table>)` and assert columns match the spec.
+- [ ] **Step 7:** commit: `feat(db): SQLite connection + initial schema migration`.
 
-**Acceptance:** App startup creates `agent.db` with all 6 tables; restarting the app does not re-run migrations.
+**Acceptance:** App startup creates `agent.db` with all 6 tables, logs `db.migrated`, and restarting the app does not re-run migrations.
 
 ---
 
@@ -241,19 +292,25 @@ Goal: the agent can hold wallets and write to its log tables. After this phase, 
 **Files:**
 - Create: `server/src/services/scheduler_service.py`
 - Create: `server/tests/unit/test_scheduler_service.py`
+- Create: `server/tests/integration/test_scheduler_nonblocking.py`
 
-- [ ] **Step 1:** implement module-level `BackgroundScheduler` with `SQLAlchemyJobStore(url=f"sqlite:///{app_config.DB_PATH}")`. Lazy init.
+**Non-blocking semantics:** `BackgroundScheduler` runs jobs in a separate threadpool. HTTP requests (REST + MCP) must never wait on a cron tick. A tick firing must not delay `GET /status` or any other request. Tests enforce this property.
+
+- [ ] **Step 1:** implement module-level `BackgroundScheduler` with `SQLAlchemyJobStore(url=f"sqlite:///{app_config.DB_PATH}")`, `executors={'default': ThreadPoolExecutor(max_workers=10)}`, `job_defaults={'coalesce': True, 'max_instances': 1, 'misfire_grace_time': 60}`. Lazy init.
 - [ ] **Step 2:** add timeframe-to-cron mapping table from architecture doc (1m → `*/1 * * * *`, etc.).
-- [ ] **Step 3:** implement `register_job(strategy_id, timeframe, callable_path) -> str` — adds a `CronTrigger` job named `eval-<strategy_id>`. Idempotent (replace existing).
-- [ ] **Step 4:** implement `cancel_job(strategy_id) -> None` and `list_active_jobs() -> list[dict]`.
-- [ ] **Step 5:** wire scheduler `start()` into FastAPI lifespan; `shutdown()` on app stop.
-- [ ] **Step 6:** unit tests:
+- [ ] **Step 3:** implement `register_job(strategy_id, timeframe, callable_path) -> str` — adds a `CronTrigger` job named `eval-<strategy_id>`. Idempotent (replace existing). Emit `scheduler.job.registered` log with strategy_id + cron expression.
+- [ ] **Step 4:** implement `cancel_job(strategy_id) -> None` (emit `scheduler.job.cancelled`) and `list_active_jobs() -> list[dict]` returning `{strategy_id, next_run_at, cron_expression, last_run_at}`.
+- [ ] **Step 5:** add a scheduler event listener for `EVENT_JOB_EXECUTED` + `EVENT_JOB_ERROR` that emits `scheduler.job.fired` (success) or `scheduler.job.errored` (failure) with strategy_id + duration + exception info. This is how external observers (including the chat UI) know a tick actually fired.
+- [ ] **Step 6:** wire scheduler `start()` into FastAPI lifespan (log `scheduler.started`); `shutdown(wait=False)` on app stop so app shutdown doesn't block on in-flight ticks.
+- [ ] **Step 7:** unit tests:
   - register a job, list jobs, assert it's there
   - cancel, assert it's gone
   - register same strategy twice, assert no duplicates
-- [ ] **Step 7:** commit: `feat(scheduler): APScheduler wrapper with SQLite jobstore`.
+  - registering emits the `scheduler.job.registered` log event
+- [ ] **Step 8:** integration test `test_scheduler_nonblocking.py` — register a job whose callable sleeps 3 seconds, then immediately hit `GET /status` 10 times in a row within a 1-second window. Assert every request returns under 100 ms (i.e., the slow tick does not block the request path). Assert `scheduler.job.fired` log event appears after the tick's sleep completes.
+- [ ] **Step 9:** commit: `feat(scheduler): non-blocking APScheduler wrapper with fire-event observability`.
 
-**Acceptance:** Jobs persist across app restart; canceling removes them.
+**Acceptance:** Jobs persist across app restart; HTTP requests are unaffected by in-flight ticks; every tick fire emits a structured log event that external observers (chat UI, log tail) can see.
 
 ---
 
@@ -398,13 +455,14 @@ Goal: the autonomous strategy creation flow + cron evaluation work end-to-end ag
   - On `→ live`: validate allocation block, call `allocation_service.record_allocation()`, call `mangroveai_client().strategies.update_status()`, register cron job via `scheduler_service.register_job(strategy_id, timeframe, "src.services.strategy_service.tick")`
   - On `→ paper`: register cron, no allocation
   - On `→ inactive` or `→ archived`: cancel cron, release allocation if any
-- [ ] **Step 5:** implement `tick(strategy_id) -> Evaluation` — the cron callback:
-  1. Load strategy from local cache
-  2. Fetch latest market data via `mangroveai_client().crypto_assets.get_ohlcv(...)`
-  3. Call `mangroveai_client().execution.evaluate(strategy_mangrove_id, current_data)` → SDK response with OrderIntent[]
-  4. If orders empty: log evaluation with `status="ok"`, no trades
-  5. If orders present: extract OrderIntents, dispatch to `order_executor.execute_many(intents, mode, wallet_address)`, log evaluation with sdk_response_json verbatim
-  6. Catch SDK errors → log evaluation with `status="error"`, `error_msg=str(e)` — never crash the scheduler
+- [ ] **Step 5:** implement `tick(strategy_id) -> Evaluation` — the cron callback. **Runs inside the scheduler threadpool; must never block the request path.** Every tick emits structured logs so external observers can see the fire-and-result sequence:
+  1. Generate a `tick_id` (UUID), bind correlation_id to it, emit `strategy.tick.started` with `strategy_id`, `tick_id`, `timeframe`.
+  2. Load strategy from local cache.
+  3. Fetch latest market data via `mangroveai_client().crypto_assets.get_ohlcv(...)` — emit `sdk.call.started` / `sdk.call.completed` bracketing.
+  4. Call `mangroveai_client().execution.evaluate(strategy_mangrove_id, current_data)` → SDK response with OrderIntent[] (same bracketing).
+  5. If orders empty: persist evaluation with `status="ok"`, emit `strategy.tick.completed` with `order_count=0`, `duration_ms`.
+  6. If orders present: extract OrderIntents, dispatch to `order_executor.execute_many(intents, mode, wallet_address)`, persist evaluation with `sdk_response_json` verbatim, emit `strategy.tick.completed` with `order_count=N`, `duration_ms`.
+  7. On any exception: persist evaluation with `status="error"`, emit `strategy.tick.errored` with `exception` + `duration_ms`. **Never let the exception propagate out of the tick callback** — that would crash the scheduler worker.
 - [ ] **Step 6:** integration tests:
   - `test_create_autonomous_happy_path` — produces a StrategyDetail with generation_report
   - `test_create_autonomous_no_viable_candidates` — raises 422
@@ -599,24 +657,31 @@ Goal: prove the full system works end-to-end.
 
 ---
 
-### Task 5.2 — E2E paper trading lifecycle
+### Task 5.2 — E2E paper trading lifecycle (non-blocking observation)
 
 **Agent:** test-engineer
 **Files:**
 - Create: `server/tests/e2e/test_paper_lifecycle.py`
 
-- [ ] **Step 1:** test scenario:
-  1. Create wallet (EVM testnet)
-  2. Create autonomous strategy (`{goal: "momentum", asset: "ETH", timeframe: "5m"}`)
-  3. Activate to `paper`
-  4. Wait for one cron tick (or invoke `/strategies/{id}/evaluate` manually)
-  5. Assert at least one evaluation row exists
-  6. If orders fired, assert simulated trades logged (mode=paper, status=simulated)
-  7. Deactivate to `inactive` (cron should be removed)
-- [ ] **Step 2:** uses the dev Mangrove env. Skip if `SKIP_E2E=1`.
-- [ ] **Step 3:** commit: `test(e2e): paper trading full lifecycle`.
+**Observation principle:** the test must NOT `time.sleep()` past a cron interval. It must stay responsive while the cron fires in the background, exactly the way a user chatting with the agent stays responsive. The test polls for tick evidence via HTTP at short intervals, simulating a real user checking in periodically.
 
-**Acceptance:** A user can chat-driven create → backtest → deploy paper → see logs without errors.
+- [ ] **Step 1:** test scenario:
+  1. Create EVM wallet via `POST /wallet/create`.
+  2. Create autonomous strategy: `POST /strategies/autonomous` with `{goal: "momentum", asset: "ETH", timeframe: "1m"}`.
+  3. Activate to `paper` via `PATCH /strategies/{id}/status` with `{status: "paper"}`.
+  4. Record `t_activation` timestamp.
+  5. **Non-blocking poll loop** (no `sleep()` past one tick interval):
+     - Every 5 seconds, in parallel with other non-blocking work:
+       - `GET /status` — assert it returns in < 100 ms (proves the cron isn't blocking the request path).
+       - `GET /strategies/{id}/evaluations?limit=1` — check if an evaluation with `timestamp > t_activation` exists.
+     - Stop polling when an evaluation is found OR when 90 seconds elapsed (timeout failure).
+  6. Assert the found evaluation has `status="ok"`. If `order_intents` is non-empty, assert corresponding `trades` rows with `mode="paper"`, `status="simulated"`, `tx_hash=None`.
+  7. Also verify via log tail: capture stdout during the test window and assert `strategy.tick.started` + `strategy.tick.completed` events appear at least once for this `strategy_id`.
+  8. Deactivate: `PATCH /strategies/{id}/status` with `{status: "inactive"}`. Assert `GET /status` shows `active_cron_jobs` decremented.
+- [ ] **Step 2:** uses the dev Mangrove env. Skip if `SKIP_E2E=1`.
+- [ ] **Step 3:** commit: `test(e2e): paper lifecycle with non-blocking tick observation`.
+
+**Acceptance:** The full lifecycle runs end-to-end. The test itself proves the agent stays responsive to `/status` requests while a tick fires in the background. Log events prove the tick actually executed.
 
 ---
 
@@ -759,36 +824,39 @@ Goal: anyone cloning the repo on workshop day can `docker compose up`, hand Clau
 
 ## Summary
 
-**Total: 23 tasks across 6 phases.**
+**Total: 24 tasks across 6 phases.**
 
 | Phase | Tasks | Parallelizable? |
 |-------|-------|-----------------|
-| 1. Foundation & cleanup | 6 | Mostly sequential (1.1 → 1.2 → 1.3 → 1.4/1.5 parallel → 1.6) |
+| 1. Foundation & cleanup | 7 | Mostly sequential (1.1 → 1.2 → 1.3 → 1.4/1.5 parallel → 1.6 → 1.7) |
 | 2. Core infrastructure | 4 | 2.2/2.3/2.4 parallel after 2.1 |
 | 3. Strategy pipeline | 4 | 3.1/3.2 parallel after Phase 2; 3.3 needs 2.1; 3.4 needs all of Phase 3 |
 | 4. API layer | 7 | 4.1–4.6 parallel after Phase 3; 4.7 last |
 | 5. Verification | 4 | Sequential; 5.4 gated by 5.3 and `ENABLE_MAINNET_TEST=1` |
 | 6. Polish | 3 | Sequential |
 
-**Critical path (sequential):** 1.1 → 1.2 → 1.3 → 1.6 → 2.1 → 3.3 → 3.4 → 4.7 → 5.1 → 5.2 → 5.3 → 5.4 → 6.x.
+**Critical path (sequential):** 1.1 → 1.2 → 1.3 → 1.6 (logging) → 1.7 (SQLite) → 2.1 → 3.3 → 3.4 → 4.7 → 5.1 → 5.2 → 5.3 → 5.4 → 6.x.
 
 **Agent allocation:**
-- backend-developer: 16 tasks
+- backend-developer: 17 tasks
 - test-engineer: 4 tasks (5.1 smoke + 5.2 paper E2E + 5.3 Sepolia E2E + 5.4 mainnet E2E)
 - devops-engineer: 1 task
 - code-review: 1 task (final pass)
 - diagram-agent: not needed (diagrams already approved in arch phase)
 
 **Definition of done for v1:**
-1. All 23 tasks complete.
-2. Paper lifecycle E2E green (Task 5.2).
+1. All 24 tasks complete.
+2. Paper lifecycle E2E green (Task 5.2) — proves non-blocking scheduler + observable tick events.
 3. Base Sepolia testnet live swap E2E green with explorer URL verified (Task 5.3).
 4. Base mainnet real-funds swap verified once, tx hash pasted in `docs/testing-mainnet.md` (Task 5.4).
 5. `docker compose up` produces a working agent (Task 6.2).
 6. `scripts/verify_quickstart.sh` exits 0 in under 300 seconds on a cold clone (Task 6.1).
+7. Logs are structured JSON in non-local environments, correlation_id flows through every request → tick → SDK call → log line.
 
 **Architecture discipline reminders (flagged during plan audit):**
 - All signing is **client-side** in `wallet_manager.sign()`. The `mangrovemarkets` SDK receives only signed transaction bytes; it never sees seed phrases or private keys. Every task touching the DEX swap flow (2.1, 3.3, 4.3) carries this note.
 - **No pass-through service modules exist or should be created.** Routes for market/on-chain/signals/KB/portfolio/dex-read-ops call the SDK clients directly from `shared/clients/mangrove.py`. The 8 services that DO exist (wallet_manager, strategy_service, candidate_generator, backtest_service, order_executor, scheduler_service, trade_log, allocation_service) all add orchestration the SDK doesn't provide.
 - **XRPL is stubbed (501)**, not implemented. Users creating an XRPL wallet get a clear error. README calls this out.
 - **Mainnet testing is opt-in and capped at $1 per run** — pre-flight checklist in `docs/testing-mainnet.md`.
+- **Scheduler ticks are non-blocking.** APScheduler's `BackgroundScheduler` runs ticks in a threadpool; HTTP requests (REST + MCP) are never delayed by in-flight ticks. Task 2.4 enforces this with an integration test that parallel-hits `/status` while a 3-second tick runs.
+- **Every tick is observable via structured logs.** `strategy.tick.started`, `strategy.tick.completed`, `strategy.tick.errored`, and `scheduler.job.fired` events let a user tailing logs (or chatting with the agent) see ticks fire in real time without having to poll an endpoint.

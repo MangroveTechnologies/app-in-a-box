@@ -537,7 +537,7 @@ app-in-a-box/
 │   │   │       ├── strategies.py               # create, list, get, patch status, backtest, evaluate
 │   │   │       ├── logs.py                     # evaluations, trades
 │   │   │       ├── kb.py                       # search, glossary
-│   │   │       └── easter_egg.py               # Existing x402 demo route (kept)
+│   │   │       └── hello_mangrove.py           # x402 demo route (renamed from template's easter_egg.py)
 │   │   ├── mcp/
 │   │   │   ├── server.py                       # FastMCP setup
 │   │   │   ├── tools.py                        # Tool definitions (mirror REST)
@@ -612,7 +612,7 @@ app-in-a-box/
 | **Redis** | ❌ Remove | No caching; APScheduler jobstore goes in SQLite. |
 | **x402 payment middleware** | ✅ Keep | Will be enabled later. Stays wired up so future endpoints can move to the payment tier without scaffolding work. |
 | **`shared/x402/` config + server** | ✅ Keep | Same reason. |
-| **`routes/easter_egg.py` (x402 demo)** | ✅ Keep | Smoke test for the payment path; harmless to ship. |
+| **`routes/hello_mangrove.py` (x402 demo, renamed from `easter_egg.py`)** | ✅ Keep | Smoke test for the payment path; harmless to ship. |
 | **x402 config keys in `configuration-keys.json`** | ✅ Keep | Required at startup by the payment middleware. |
 | **Items demo route** | ❌ Remove | Template scaffolding. |
 | **Notes demo route** | ❌ Remove | Template scaffolding (Postgres-backed). |

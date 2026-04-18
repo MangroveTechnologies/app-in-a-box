@@ -24,11 +24,11 @@ Cloud deployment (Cloud Run, persistent cloud storage) is **out of scope for v1*
 |------|-----------|---------------|
 | Free | `/health`, `/api/v1/agent/tools`, `/api/v1/agent/status` | No credentials |
 | Auth | Everything else (default tier for v1 agent endpoints) | `X-API-Key: <configured-key>` header |
-| x402 | Reserved — currently the template's `easter_egg.py` route only; no v1 agent endpoints land here yet | x402 payment OR `X-API-Key` bypass |
+| x402 | Reserved — currently the `hello_mangrove.py` demo route only (renamed from the template's `easter_egg.py`); no v1 agent endpoints land here yet | x402 payment OR `X-API-Key` bypass |
 
 Single-user model: the API key (config key `API_KEY`) is a shared secret between the user's Claude Code config and the agent. No RBAC, no user accounts.
 
-x402 stays wired up — middleware, routes, config keys, the demo `easter_egg` endpoint — so future agent endpoints can be moved to the payment tier without scaffolding work. The choice of which agent endpoints to monetize is deferred.
+x402 stays wired up — middleware, routes, config keys, the `hello_mangrove` demo endpoint — so future agent endpoints can be moved to the payment tier without scaffolding work. The choice of which agent endpoints to monetize is deferred.
 
 ---
 
@@ -856,7 +856,7 @@ x402 keys from the template stay required — payment middleware needs them at s
     "X402_NETWORK",
     "X402_PAY_TO",
     "X402_USDC_CONTRACT",
-    "X402_EASTER_EGG_PRICE",
+    "X402_HELLO_MANGROVE_PRICE",
     "X402_CDP_API_KEY_ID",
     "X402_CDP_API_KEY_SECRET"
   ],
@@ -884,7 +884,7 @@ x402 keys from the template stay required — payment middleware needs them at s
   "X402_NETWORK": "eip155:84532",
   "X402_PAY_TO": "0xde991861bB3e7078015826Fad749de398F6ec1f6",
   "X402_USDC_CONTRACT": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
-  "X402_EASTER_EGG_PRICE": "50000",
+  "X402_HELLO_MANGROVE_PRICE": "50000",
   "X402_CDP_API_KEY_ID": "",
   "X402_CDP_API_KEY_SECRET": ""
 }

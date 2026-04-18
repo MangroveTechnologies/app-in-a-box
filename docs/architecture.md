@@ -207,8 +207,7 @@ From here, the scheduler fires independently on the strategy's timeframe — no 
 sequenceDiagram
     participant SCH as APScheduler
     participant SS as strategy_service
-    participant MD as market_data
-    participant SDK as mangroveai.execution
+    participant SDK as mangroveai SDK
     participant OE as order_executor
     participant Mkts as mangrovemarkets SDK
     participant WM as wallet_manager
@@ -217,8 +216,8 @@ sequenceDiagram
 
     SCH->>SS: tick(strategy_id)
     SS->>DB: load strategy
-    SS->>MD: get_latest(asset, timeframe)
-    MD-->>SS: current market data
+    SS->>SDK: crypto_assets.get_ohlcv(asset, timeframe)
+    SDK-->>SS: current market data
     SS->>SDK: execution.evaluate(strategy_id, market_data)
     SDK-->>SS: [OrderIntent] (0..N, with risk gates already applied)
 
@@ -229,8 +228,8 @@ sequenceDiagram
         SS->>OE: execute(order_intents, strategy.mode)
         loop per order
             alt mode == paper
-                OE->>MD: mid price
-                MD-->>OE: price
+                OE->>SDK: crypto_assets.get_market_data(asset)
+                SDK-->>OE: current price
                 OE->>TL: log simulated trade
                 TL->>DB: INSERT trades (status=simulated)
             else mode == live
@@ -267,49 +266,52 @@ The evaluator logic is entirely inside `mangroveai.execution.evaluate()`. The ag
 
 ## Sequence — DEX Swap (user-initiated)
 
+User-initiated swaps and cron-driven swaps share the same execution path: the route handler builds an `OrderIntent` from the request and calls `order_executor.execute_one(intent, mode='live')`. There is no separate `dex_service`.
+
 ```mermaid
 sequenceDiagram
     participant U as User
     participant API as REST or MCP
-    participant DS as dex_service
+    participant OE as order_executor
     participant WM as wallet_manager
     participant SDK as mangrovemarkets SDK
     participant Chain as Blockchain
 
     U->>API: POST /dex/swap<br/>{..., confirm: true}
-    API->>DS: execute_swap(req)
-    DS->>SDK: dex.get_quote(...)
-    SDK-->>DS: Quote
-    DS->>SDK: dex.approve_token(...)
-    SDK-->>DS: UnsignedTransaction | None
+    API->>API: build OrderIntent from request
+    API->>OE: execute_one(intent, mode=live)
+    OE->>SDK: dex.get_quote(...)
+    SDK-->>OE: Quote
+    OE->>SDK: dex.approve_token(...)
+    SDK-->>OE: UnsignedTransaction | None
 
     opt needs approval
-        DS->>WM: sign(tx, wallet)
+        OE->>WM: sign(tx, wallet)
         WM->>WM: decrypt seed in memory
-        WM-->>DS: signed_tx
-        DS->>SDK: dex.broadcast(signed_tx)
+        WM-->>OE: signed_tx
+        OE->>SDK: dex.broadcast(signed_tx)
         SDK->>Chain: submit tx
         Chain-->>SDK: tx_hash
-        SDK-->>DS: BroadcastResult
+        SDK-->>OE: BroadcastResult
         loop poll
-            DS->>SDK: dex.tx_status(hash)
-            SDK-->>DS: status
+            OE->>SDK: dex.tx_status(hash)
+            SDK-->>OE: status
         end
     end
 
-    DS->>SDK: dex.prepare_swap(quote_id, wallet)
-    SDK-->>DS: UnsignedTransaction
-    DS->>WM: sign(tx, wallet)
-    WM-->>DS: signed_tx
-    DS->>SDK: dex.broadcast(signed_tx)
+    OE->>SDK: dex.prepare_swap(quote_id, wallet)
+    SDK-->>OE: UnsignedTransaction
+    OE->>WM: sign(tx, wallet)
+    WM-->>OE: signed_tx
+    OE->>SDK: dex.broadcast(signed_tx)
     SDK->>Chain: submit tx
     Chain-->>SDK: tx_hash
     loop poll
-        DS->>SDK: dex.tx_status(hash)
-        SDK-->>DS: status
+        OE->>SDK: dex.tx_status(hash)
+        SDK-->>OE: status
     end
-    DS->>DS: log to trades table
-    DS-->>API: SwapResult (tx_hash, fill, ...)
+    OE->>OE: log to trades table
+    OE-->>API: SwapResult (tx_hash, fill, ...)
     API-->>U: 200 OK
 ```
 
@@ -365,20 +367,15 @@ graph TB
             SStrat[strategy_service.py<br/>cron-tick orchestrator]
             SCG[candidate_generator.py]
             SBT[backtest_service.py]
-            SExec[order_executor.py<br/>paper or live dispatch]
+            SExec[order_executor.py<br/>single DEX execution path<br/>paper or live]
             SSched[scheduler_service.py]
             SLog[trade_log.py]
             SAlloc[allocation_service.py]
-            SSig[signal_service.py]
-            SMD[market_data.py]
-            SOC[on_chain.py]
-            SDex[dex_service.py]
-            SPort[portfolio_service.py]
-            SKb[kb_service.py]
         end
 
         subgraph "shared/"
             AuthMW[auth/middleware.py<br/>existing]
+            X402[x402/<br/>existing payment middleware<br/>kept for future endpoints]
             DB[db/sqlite.py<br/>new]
             Crypto[crypto/fernet.py<br/>new]
             Clients[clients/mangrove.py<br/>SDK singletons, new]
@@ -395,28 +392,35 @@ graph TB
     App --> Router
     App --> MCPServer
     App --> SSched
+    App --> X402
     Router --> RWallet & RDex & RMarket & ROnChain & RSignals & RStrat & RLogs & RKb & RDiscovery
     MCPServer --> MCPTools
     MCPTools --> MCPReg
 
-    RWallet & RDex --> SWallet & SDex & SPort
-    RMarket & ROnChain --> SMD & SOC
-    RSignals --> SSig
+    RWallet --> SWallet
+    RWallet -.portfolio,balances.-> Clients
+    RDex -.venues,pairs,quote.-> Clients
+    RDex -->|user-initiated swap| SExec
+    RMarket -.OHLCV, market data.-> Clients
+    ROnChain -.smart money, whale.-> Clients
+    RSignals -.list, get.-> Clients
+    RKb -.search, glossary.-> Clients
     RStrat --> SStrat
     RLogs --> SLog
-    RKb --> SKb
-    MCPTools -.same services.-> SWallet & SStrat & SDex
+    MCPTools -.same services and clients.-> SWallet & SStrat & SExec & Clients
 
     SStrat --> SCG & SBT & SSched & SAlloc
     SStrat --> Clients
     SSched --> SStrat
     SStrat --> SExec
-    SExec --> SDex & SLog
+    SExec --> SLog
+    SExec --> Clients
+    SExec --> SWallet
 
     SWallet --> Crypto
     SWallet --> DB
-    SStrat & SLog & SAlloc --> DB
-    SStrat & SBT & SSig & SMD & SOC & SDex & SPort & SKb --> Clients
+    SLog & SAlloc --> DB
+    SCG & SBT --> Clients
 ```
 
 Key properties:
@@ -532,35 +536,31 @@ app-in-a-box/
 │   │   │       ├── signals.py                  # list, get
 │   │   │       ├── strategies.py               # create, list, get, patch status, backtest, evaluate
 │   │   │       ├── logs.py                     # evaluations, trades
-│   │   │       └── kb.py                       # search, glossary
+│   │   │       ├── kb.py                       # search, glossary
+│   │   │       └── easter_egg.py               # Existing x402 demo route (kept)
 │   │   ├── mcp/
 │   │   │   ├── server.py                       # FastMCP setup
 │   │   │   ├── tools.py                        # Tool definitions (mirror REST)
 │   │   │   └── registry.py                     # register_tool helper
-│   │   ├── services/
+│   │   ├── services/                           # Only services that ADD orchestration
 │   │   │   ├── wallet_manager.py               # Key gen, Fernet encrypt, local signing
 │   │   │   ├── strategy_service.py             # Cron orchestrator: data → SDK evaluate → executor
 │   │   │   ├── candidate_generator.py          # Goal → 5-10 signal combos
 │   │   │   ├── backtest_service.py             # Quick + full, filter + IRR rank
-│   │   │   ├── order_executor.py               # paper (simulate) or live (DEX swap)
+│   │   │   ├── order_executor.py               # SINGLE swap path: cron-driven OR user-initiated
 │   │   │   ├── scheduler_service.py            # APScheduler wrapper
 │   │   │   ├── trade_log.py                    # SQLite writes
-│   │   │   ├── allocation_service.py           # Per-strategy fund accounting
-│   │   │   ├── signal_service.py               # Wraps mangroveai.signals
-│   │   │   ├── market_data.py                  # Wraps mangroveai.crypto_assets
-│   │   │   ├── on_chain.py                     # Wraps mangroveai.on_chain
-│   │   │   ├── dex_service.py                  # Wraps mangrovemarkets.dex
-│   │   │   ├── portfolio_service.py            # Wraps mangrovemarkets.portfolio
-│   │   │   └── kb_service.py                   # Wraps mangroveai.kb
+│   │   │   └── allocation_service.py           # Per-strategy fund accounting
 │   │   ├── shared/
 │   │   │   ├── auth/middleware.py              # X-API-Key validation (existing)
+│   │   │   ├── x402/                           # Existing payment middleware (kept; no v1 endpoints use it yet)
 │   │   │   ├── db/
 │   │   │   │   ├── sqlite.py                   # Connection helper, migrations
 │   │   │   │   └── migrations/                 # SQL schema files
 │   │   │   ├── crypto/
 │   │   │   │   └── fernet.py                   # Master key mgmt + Fernet wrapper
 │   │   │   ├── clients/
-│   │   │   │   └── mangrove.py                 # SDK singletons
+│   │   │   │   └── mangrove.py                 # SDK singletons (called directly by routes)
 │   │   │   └── errors.py                       # Error codes, exception → HTTP mapping
 │   │   ├── models/
 │   │   │   ├── requests.py                     # Pydantic request models
@@ -610,16 +610,19 @@ app-in-a-box/
 | **Fernet encryption + OS keychain** | ✅ Add (new) | Wallet key protection |
 | **PostgreSQL** | ❌ Remove | SQLite suffices. Remove `--profile full`, `db/init.sql` postgres schema, `notes.py` route. |
 | **Redis** | ❌ Remove | No caching; APScheduler jobstore goes in SQLite. |
-| **x402 payment middleware + routes** | ❌ Remove | Local agent, no payment surface. Remove `shared/x402/`, `routes/easter_egg.py`, x402 keys from `configuration-keys.json`. |
+| **x402 payment middleware** | ✅ Keep | Will be enabled later. Stays wired up so future endpoints can move to the payment tier without scaffolding work. |
+| **`shared/x402/` config + server** | ✅ Keep | Same reason. |
+| **`routes/easter_egg.py` (x402 demo)** | ✅ Keep | Smoke test for the payment path; harmless to ship. |
+| **x402 config keys in `configuration-keys.json`** | ✅ Keep | Required at startup by the payment middleware. |
 | **Items demo route** | ❌ Remove | Template scaffolding. |
-| **Notes demo route** | ❌ Remove | Template scaffolding. |
-| **Easter egg route** | ❌ Remove | x402 demo, not applicable. |
+| **Notes demo route** | ❌ Remove | Template scaffolding (Postgres-backed). |
 | **Echo route** | ❌ Remove | Template scaffolding. |
 | **Terraform (GCP)** | ❌ Remove | Cloud is out of scope for v1. Delete `infra/terraform/`. |
 | **GitHub Actions: `deploy-cloudrun.yaml`** | ❌ Remove | Cloud is out of scope for v1. |
 | **GitHub Actions: `ci.yml`** | ✅ Keep | Lint + test on push/PR. |
 | **Docker Compose (app-only)** | ✅ Keep | Primary local dev entry point. |
 | **Docker Compose (full profile)** | ❌ Remove | Postgres + Redis not needed. |
+| **Pass-through service modules** (`signal_service`, `market_data`, `on_chain`, `kb_service`, `dex_service`, `portfolio_service`) | ❌ Don't create | Routes call SDK clients directly; wrapping the SDK adds nothing. |
 
 ---
 

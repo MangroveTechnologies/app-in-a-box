@@ -23,10 +23,12 @@ Cloud deployment (Cloud Run, persistent cloud storage) is **out of scope for v1*
 | Tier | Endpoints | How to access |
 |------|-----------|---------------|
 | Free | `/health`, `/api/v1/agent/tools`, `/api/v1/agent/status` | No credentials |
-| Auth | Everything else | `X-API-Key: <configured-key>` header |
-| x402 | None (v1) | — |
+| Auth | Everything else (default tier for v1 agent endpoints) | `X-API-Key: <configured-key>` header |
+| x402 | Reserved — currently the template's `easter_egg.py` route only; no v1 agent endpoints land here yet | x402 payment OR `X-API-Key` bypass |
 
 Single-user model: the API key (config key `API_KEY`) is a shared secret between the user's Claude Code config and the agent. No RBAC, no user accounts.
+
+x402 stays wired up — middleware, routes, config keys, the demo `easter_egg` endpoint — so future agent endpoints can be moved to the payment tier without scaffolding work. The choice of which agent endpoints to monetize is deferred.
 
 ---
 
@@ -831,7 +833,9 @@ client = MangroveMarkets(base_url=os.environ["MANGROVEMARKETS_BASE_URL"])
 
 The agent uses the existing app-in-a-box config system — no invented `.env` files, no parallel layer. Values live in `server/src/config/{environment}-config.json`, with required keys declared in `server/src/config/configuration-keys.json`. The `ENVIRONMENT` env var selects which file to load. Secret values can be referenced using the existing `secret:NAME:PROPERTY` syntax; literal values are fine for local dev.
 
-### `configuration-keys.json` (agent-specific)
+### `configuration-keys.json` (agent + x402, both required)
+
+x402 keys from the template stay required — payment middleware needs them at startup even if no agent endpoints are payment-gated yet.
 
 ```json
 {
@@ -847,7 +851,14 @@ The agent uses the existing app-in-a-box config system — no invented `.env` fi
     "BACKTEST_MIN_WIN_RATE",
     "BACKTEST_MIN_TRADES",
     "BACKTEST_DEFAULT_LOOKBACK_MONTHS",
-    "LOG_RETENTION_DAYS"
+    "LOG_RETENTION_DAYS",
+    "X402_FACILITATOR_URL",
+    "X402_NETWORK",
+    "X402_PAY_TO",
+    "X402_USDC_CONTRACT",
+    "X402_EASTER_EGG_PRICE",
+    "X402_CDP_API_KEY_ID",
+    "X402_CDP_API_KEY_SECRET"
   ],
   "full_app_keys": []
 }
@@ -868,7 +879,14 @@ The agent uses the existing app-in-a-box config system — no invented `.env` fi
   "BACKTEST_MIN_WIN_RATE": 0.51,
   "BACKTEST_MIN_TRADES": 10,
   "BACKTEST_DEFAULT_LOOKBACK_MONTHS": 3,
-  "LOG_RETENTION_DAYS": 90
+  "LOG_RETENTION_DAYS": 90,
+  "X402_FACILITATOR_URL": "https://x402.org/facilitator",
+  "X402_NETWORK": "eip155:84532",
+  "X402_PAY_TO": "0xde991861bB3e7078015826Fad749de398F6ec1f6",
+  "X402_USDC_CONTRACT": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+  "X402_EASTER_EGG_PRICE": "50000",
+  "X402_CDP_API_KEY_ID": "",
+  "X402_CDP_API_KEY_SECRET": ""
 }
 ```
 
@@ -885,22 +903,22 @@ The agent uses the existing app-in-a-box config system — no invented `.env` fi
 
 All routes and MCP tools delegate to these services. Never duplicate business logic between the two interfaces.
 
+**Service principle:** if a service would just forward arguments to an SDK call and return the result, it doesn't exist. Routes call the SDK clients directly (via `shared/clients/mangrove.py` singletons). Services exist only when they add orchestration the SDK doesn't provide.
+
+The 8 services that stay:
+
 | Module | Responsibility |
 |--------|---------------|
-| `services/wallet_manager.py` | Key gen, encryption, decryption, local signing |
-| `services/strategy_service.py` | Strategy CRUD (wraps `mangroveai.strategies`) + cron-tick orchestration: fetch market data, call `mangroveai.execution.evaluate()`, dispatch returned orders to `order_executor`. **No local signal evaluation or risk logic** — the SDK handles all of that. |
-| `services/candidate_generator.py` | Autonomous: goal → 5–10 signal combos (deterministic heuristics over `mangroveai.signals` catalog) |
+| `services/wallet_manager.py` | Key gen, Fernet encryption, local signing of unsigned txs from the SDK |
+| `services/strategy_service.py` | Cron-tick orchestration: fetch market data, call `mangroveai.execution.evaluate()`, dispatch returned orders to `order_executor`. Strategy CRUD against `mangroveai.strategies` + local cache writes. No local signal evaluation or risk logic. |
+| `services/candidate_generator.py` | Autonomous: goal → 5–10 signal combos (deterministic heuristics over the `mangroveai.signals` catalog) |
 | `services/backtest_service.py` | Quick + full backtest orchestration; filter + rank by IRR |
-| `services/signal_service.py` | Signal discovery (wraps `mangroveai.signals`) |
-| `services/market_data.py` | OHLCV, market data, trending, global (wraps `mangroveai.crypto_assets`) |
-| `services/on_chain.py` | Smart money, whale activity, holders (wraps `mangroveai.on_chain`) |
-| `services/dex_service.py` | DEX venue/pair/quote/swap (wraps `mangrovemarkets.dex`) |
-| `services/portfolio_service.py` | Portfolio value, P&L, history (wraps `mangrovemarkets.portfolio`) |
-| `services/kb_service.py` | KB search and glossary (wraps `mangroveai.kb`) |
-| `services/order_executor.py` | OrderIntent (from SDK) → DEX swap (live) or simulated fill (paper) |
+| `services/order_executor.py` | The single execution path for all DEX swaps. Takes an `OrderIntent` (from `strategy_service` for cron-driven trades, or built from a user request for the `POST /dex/swap` route). Orchestrates the full 6-step flow against `mangrovemarkets.dex` (quote → conditional approve → sign → broadcast → poll → prepare → sign → broadcast → poll). Branches paper vs live. |
 | `services/scheduler_service.py` | APScheduler wrapper: register, cancel, list active jobs |
 | `services/trade_log.py` | SQLite writes: evaluations, trades, positions |
 | `services/allocation_service.py` | Local allocation accounting for live strategies |
+
+**Routes that call SDKs directly (no service layer):** signal listing, market data (OHLCV, current data, trending, global), on-chain analytics, KB search/glossary, portfolio (value, P&L, tokens, DeFi, history), DEX venue/pair listing, DEX quote. Each route handler imports the appropriate SDK client from `shared/clients/mangrove.py`, calls the method, returns the response. Adding a wrapper service for these would only duplicate the SDK's interface.
 
 **Architectural note:** there is no `strategy_evaluator.py` module. Strategy evaluation (signal firing, position sizing, risk gates, cooldowns, volatility adjustments) is entirely the responsibility of `mangroveai.execution.evaluate()`. The agent calls the SDK and executes whatever `OrderIntent[]` comes back. Reimplementing any of that logic locally would duplicate upstream work and inevitably drift out of sync.
 

@@ -1,4 +1,4 @@
-# Technical Specification: Hank (defi-agent)
+# Technical Specification: defi-agent
 
 **Generated:** 2026-04-17
 **Status:** Draft
@@ -6,51 +6,45 @@
 
 ## Overview
 
-Hank is a FastAPI + MCP service that wraps the `mangroveai` and `mangrovemarkets` Python SDKs with local state, autonomous strategy generation, cron-based execution, and a full audit trail.
+defi-agent is a FastAPI + MCP service that wraps the `mangroveai` and `mangrovemarkets` Python SDKs with local state, autonomous strategy generation, cron-based execution, and a full audit trail.
 
-Hank exposes the same functionality two ways:
+It exposes the same functionality two ways:
 - **MCP tools at `/mcp`** (Streamable HTTP transport) — preferred for AI agents because of structured tool discovery and typed invocation.
-- **REST endpoints at `/api/v1/hank/*`** — universal; any HTTP client (Python scripts, cron jobs, curl, notebooks, tests) can use them without an MCP library.
+- **REST endpoints at `/api/v1/agent/*`** — universal; any HTTP client (Python scripts, cron jobs, curl, notebooks, tests) can use them without an MCP library.
 
-Both protocols share a single service layer — `create_wallet` (MCP tool) and `POST /api/v1/hank/wallet/create` (REST endpoint) call the same Python function. No duplicated business logic.
+Both protocols share a single service layer — `create_wallet` (MCP tool) and `POST /api/v1/agent/wallet/create` (REST endpoint) call the same Python function. No duplicated business logic.
 
-Hank is single-user and **local-first**. It runs on the user's own machine via Docker Compose — no cloud account required. It holds wallet keys locally (encrypted), registers APScheduler cron jobs at strategy activation, and logs every evaluation and trade to local SQLite.
+The agent runs on the user's own machine via Docker Compose (or `uvicorn` directly) — single-user, local-only for v1. It holds wallet keys locally (encrypted), registers APScheduler cron jobs at strategy activation, and logs every evaluation and trade to local SQLite.
 
-### Deployment modes
-
-| Mode | State persistence | Requirements | Use case |
-|------|-------------------|--------------|----------|
-| **Local (default)** | `hank.db` in user's filesystem — persists across restarts | Docker Compose, Python 3.10+ | Daily use, development, real trading |
-| **Cloud Run (optional, demo)** | `hank.db` in ephemeral container filesystem — **wiped on every redeploy** | GCP account (optional) | Workshop demo only; fresh state each session |
-| **Cloud Run (persistent)** | **Not v1.** Requires swapping SQLite for Cloud SQL or mounting a GCS volume | — | Future |
-
-**Most users will run Hank locally.** No GCP/AWS account is required. The Cloud Run option exists only for demo scenarios (e.g., the April 24 workshop) where a throwaway public URL is useful. If a user deploys to Cloud Run and redeploys, all state is lost by design — persistent cloud deploy is out of scope for v1.
+Cloud deployment (Cloud Run, persistent cloud storage) is **out of scope for v1** and will be addressed in a subsequent release.
 
 ## Access Tiers
 
 | Tier | Endpoints | How to access |
 |------|-----------|---------------|
-| Free | `/health`, `/api/v1/hank/tools`, `/api/v1/hank/status` | No credentials |
-| Auth | Everything else | `X-API-Key: $HANK_API_KEY` header |
-| x402 | None (v1) | — |
+| Free | `/health`, `/api/v1/agent/tools`, `/api/v1/agent/status` | No credentials |
+| Auth | Everything else (default tier for v1 agent endpoints) | `X-API-Key: <configured-key>` header |
+| x402 | Reserved — currently the `hello_mangrove.py` demo route only (renamed from the template's `easter_egg.py`); no v1 agent endpoints land here yet | x402 payment OR `X-API-Key` bypass |
 
-Single-user model: `HANK_API_KEY` is a shared secret between the user's Claude Code config and Hank. No RBAC, no user accounts.
+Single-user model: the API key (config key `API_KEY`) is a shared secret between the user's Claude Code config and the agent. No RBAC, no user accounts.
+
+x402 stays wired up — middleware, routes, config keys, the `hello_mangrove` demo endpoint — so future agent endpoints can be moved to the payment tier without scaffolding work. The choice of which agent endpoints to monetize is deferred.
 
 ---
 
 ## API Contracts
 
-All endpoints are JSON over HTTPS. Base path: `/api/v1/hank`. Every endpoint has a mirrored MCP tool with identical semantics (see [MCP Tools](#mcp-tools)).
+All endpoints are JSON over HTTPS. Base path: `/api/v1/agent`. Every endpoint has a mirrored MCP tool with identical semantics (see [MCP Tools](#mcp-tools)).
 
 ### Discovery (free)
 
 #### `GET /health`
-Returns `{ status, service, version, timestamp }`. Used by Cloud Run health checks.
+Returns `{ status, service, version, timestamp }`.
 
-#### `GET /api/v1/hank/tools`
+#### `GET /api/v1/agent/tools`
 Returns the full MCP tool catalog (tool names, descriptions, parameters, access tier).
 
-#### `GET /api/v1/hank/status`
+#### `GET /api/v1/agent/status`
 Returns service state:
 ```json
 {
@@ -58,7 +52,7 @@ Returns service state:
   "wallets_count": 2,
   "strategies": {"draft": 3, "inactive": 1, "paper": 2, "live": 1, "archived": 5},
   "active_cron_jobs": 3,
-  "db_path": "./hank.db",
+  "db_path": "./agent.db",
   "uptime_seconds": 12345
 }
 ```
@@ -67,13 +61,15 @@ Returns service state:
 
 ### Wallet (auth)
 
-#### `POST /api/v1/hank/wallet/create`
+#### `POST /api/v1/agent/wallet/create`
 Create + encrypt + store a wallet locally.
+
+**v1 scope:** EVM chains only for live execution. XRPL accepted but returns a clear "not supported in v1" error; Solana not supported at all.
 
 **Request:**
 ```json
 {
-  "chain": "string — evm | xrpl",
+  "chain": "string — evm | xrpl (stubbed, returns 501)",
   "network": "string — mainnet | testnet",
   "chain_id": "int | null — required for evm",
   "label": "string | null — human-friendly name"
@@ -99,31 +95,31 @@ Create + encrypt + store a wallet locally.
 >
 > ⚠️ **Important:** the seed phrase will appear in your chat transcript, which Claude Code writes to disk under `~/.claude/projects/.../*.jsonl`. If you do not want the seed phrase persisted there, (1) copy it to a secure location, (2) delete the corresponding session transcript file, and (3) back it up offline (paper, hardware wallet, password manager). Never screenshot without securing the image.
 
-**Errors:** 400 `VALIDATION_ERROR`, 409 `WALLET_ALREADY_EXISTS`, 502 `SDK_ERROR`.
+**Errors:** 400 `VALIDATION_ERROR`, 409 `WALLET_ALREADY_EXISTS`, 501 `CHAIN_NOT_SUPPORTED_IN_V1` (for XRPL), 502 `SDK_ERROR`.
 
-#### `GET /api/v1/hank/wallet/list`
+#### `GET /api/v1/agent/wallet/list`
 List all stored wallets (addresses + metadata only, no keys).
 
-#### `GET /api/v1/hank/wallet/{address}/balances?chain_id=<int>`
+#### `GET /api/v1/agent/wallet/{address}/balances?chain_id=<int>`
 Returns token balances via `mangrovemarkets.dex.balances()`.
 
-#### `GET /api/v1/hank/wallet/{address}/portfolio?chain_id=<int>`
+#### `GET /api/v1/agent/wallet/{address}/portfolio?chain_id=<int>`
 Returns aggregate portfolio: value, P&L, tokens, DeFi positions (via `mangrovemarkets.portfolio.*`).
 
-#### `GET /api/v1/hank/wallet/{address}/history?limit=<int>`
+#### `GET /api/v1/agent/wallet/{address}/history?limit=<int>`
 Returns transaction history via `mangrovemarkets.portfolio.history()`.
 
 ---
 
 ### DEX (auth)
 
-#### `GET /api/v1/hank/dex/venues`
+#### `GET /api/v1/agent/dex/venues`
 List supported DEX venues via `mangrovemarkets.dex.supported_venues()`.
 
-#### `GET /api/v1/hank/dex/pairs?venue_id=<str>`
+#### `GET /api/v1/agent/dex/pairs?venue_id=<str>`
 List trading pairs for a venue.
 
-#### `POST /api/v1/hank/dex/quote`
+#### `POST /api/v1/agent/dex/quote`
 **Request:**
 ```json
 {
@@ -136,7 +132,7 @@ List trading pairs for a venue.
 ```
 **Response (200):** Mirrors `mangrovemarkets.dex.Quote` model.
 
-#### `POST /api/v1/hank/dex/swap`
+#### `POST /api/v1/agent/dex/swap`
 Execute the full 6-step swap flow. **Requires `confirm: true`** in the request body — protects against agent-initiated swaps without user approval.
 
 **Request:**
@@ -146,7 +142,7 @@ Execute the full 6-step swap flow. **Requires `confirm: true`** in the request b
   "output_token": "string",
   "amount": "number",
   "chain_id": "int",
-  "wallet_address": "string — must be in Hank's wallet store",
+  "wallet_address": "string — must be in the agent's wallet store",
   "slippage": "number — default 1.0 (percent)",
   "mev_protection": "boolean — default false",
   "confirm": "boolean — must be true"
@@ -163,7 +159,7 @@ Execute the full 6-step swap flow. **Requires `confirm: true`** in the request b
   "fill_price": "number",
   "fees": "object",
   "approval_tx_hash": "string | null",
-  "trade_log_id": "string — UUID in Hank's local trades table"
+  "trade_log_id": "string — UUID in the agent's local trades table"
 }
 ```
 
@@ -175,42 +171,42 @@ Internal flow: quote → `approve_token` (returns None if already approved) → 
 
 ### Market Data (auth)
 
-#### `GET /api/v1/hank/market/ohlcv?symbol=<str>&timeframe=<str>&lookback_days=<int>`
+#### `GET /api/v1/agent/market/ohlcv?symbol=<str>&timeframe=<str>&lookback_days=<int>`
 Returns OHLCV via `mangroveai.crypto_assets.get_ohlcv()`.
 
-#### `GET /api/v1/hank/market/data?symbol=<str>`
+#### `GET /api/v1/agent/market/data?symbol=<str>`
 Current market data (price, market cap, volume, 24h/7d change).
 
-#### `GET /api/v1/hank/market/trending`
+#### `GET /api/v1/agent/market/trending`
 Trending assets.
 
-#### `GET /api/v1/hank/market/global`
+#### `GET /api/v1/agent/market/global`
 Global market cap, BTC dominance, 24h change.
 
-#### `GET /api/v1/hank/on-chain/smart-money?symbol=<str>&chain=<str>`
+#### `GET /api/v1/agent/on-chain/smart-money?symbol=<str>&chain=<str>`
 Smart money sentiment via `mangroveai.on_chain.get_smart_money_sentiment()`.
 
-#### `GET /api/v1/hank/on-chain/whale-activity?symbol=<str>&hours_back=<int>`
+#### `GET /api/v1/agent/on-chain/whale-activity?symbol=<str>&hours_back=<int>`
 Whale activity summary.
 
-#### `GET /api/v1/hank/on-chain/token-holders/{symbol}`
+#### `GET /api/v1/agent/on-chain/token-holders/{symbol}`
 Holder distribution and concentration.
 
 ---
 
 ### Signals (auth)
 
-#### `GET /api/v1/hank/signals?category=<str>&search=<str>&limit=<int>`
+#### `GET /api/v1/agent/signals?category=<str>&search=<str>&limit=<int>`
 List/search signals via `mangroveai.signals.list()` with optional filtering.
 
-#### `GET /api/v1/hank/signals/{name}`
+#### `GET /api/v1/agent/signals/{name}`
 Signal detail with parameter spec.
 
 ---
 
 ### Strategies (auth)
 
-#### `POST /api/v1/hank/strategies/autonomous`
+#### `POST /api/v1/agent/strategies/autonomous`
 Autonomous strategy creation: skill picks candidates → quick backtest → filter → rank by IRR → full backtest → persist.
 
 **Request:**
@@ -249,7 +245,7 @@ Autonomous strategy creation: skill picks candidates → quick backtest → filt
 
 **Errors:** 400 `VALIDATION_ERROR`, 422 `STRATEGY_NO_VIABLE_CANDIDATES`, 502 `SDK_ERROR`.
 
-#### `POST /api/v1/hank/strategies/manual`
+#### `POST /api/v1/agent/strategies/manual`
 Manual strategy creation with explicit entry/exit rules.
 
 **Request:**
@@ -274,13 +270,13 @@ Manual strategy creation with explicit entry/exit rules.
 
 Validation: entry must be exactly 1 TRIGGER + 0+ FILTERs; exit must be 0–1 TRIGGERs + 0+ FILTERs.
 
-#### `GET /api/v1/hank/strategies?status=<str>&limit=<int>&offset=<int>`
+#### `GET /api/v1/agent/strategies?status=<str>&limit=<int>&offset=<int>`
 List strategies with optional status filter.
 
-#### `GET /api/v1/hank/strategies/{id}`
+#### `GET /api/v1/agent/strategies/{id}`
 Full strategy details.
 
-#### `PATCH /api/v1/hank/strategies/{id}/status`
+#### `PATCH /api/v1/agent/strategies/{id}/status`
 **Single source of truth for strategy lifecycle.** This is the only way to activate, deactivate, or archive a strategy. Side effects (register/cancel cron jobs, allocate/release funds) are driven by the status transition.
 
 **Request:**
@@ -307,7 +303,7 @@ Side effects by target status:
 
 **Errors:** 400 `STRATEGY_INVALID_STATUS_TRANSITION`, 400 `CONFIRMATION_REQUIRED`, 400 `ALLOCATION_INSUFFICIENT`, 404 `WALLET_NOT_FOUND`.
 
-#### `POST /api/v1/hank/strategies/{id}/backtest`
+#### `POST /api/v1/agent/strategies/{id}/backtest`
 **Request:**
 ```json
 {
@@ -319,37 +315,37 @@ Side effects by target status:
 ```
 **Response:** Full backtest metrics + trade history.
 
-#### `POST /api/v1/hank/strategies/{id}/evaluate`
+#### `POST /api/v1/agent/strategies/{id}/evaluate`
 Manually trigger a single evaluation tick (for debugging/power users). Same code path the cron job runs.
 
 ---
 
 ### Execution Logs (auth)
 
-#### `GET /api/v1/hank/strategies/{id}/evaluations?limit=<int>&offset=<int>`
+#### `GET /api/v1/agent/strategies/{id}/evaluations?limit=<int>&offset=<int>`
 Returns evaluation log for a strategy, newest first.
 
-#### `GET /api/v1/hank/strategies/{id}/trades?limit=<int>&offset=<int>`
+#### `GET /api/v1/agent/strategies/{id}/trades?limit=<int>&offset=<int>`
 Returns trades for a strategy, newest first.
 
-#### `GET /api/v1/hank/trades?limit=<int>&strategy_id=<str>&mode=<str>`
+#### `GET /api/v1/agent/trades?limit=<int>&strategy_id=<str>&mode=<str>`
 All trades across strategies, with optional filters.
 
 ---
 
 ### Knowledge Base (auth)
 
-#### `GET /api/v1/hank/kb/search?q=<str>&limit=<int>`
+#### `GET /api/v1/agent/kb/search?q=<str>&limit=<int>`
 Full-text search via `mangroveai.kb.search.*`.
 
-#### `GET /api/v1/hank/kb/glossary/{term}`
+#### `GET /api/v1/agent/kb/glossary/{term}`
 Glossary term lookup with backlinks.
 
 ---
 
 ## MCP Tools
 
-Every REST endpoint has a mirrored MCP tool with identical semantics. Tool names use plain `verb_resource` form (e.g. `create_strategy_autonomous`, `list_trades`, `get_market_data`) — no `hank_` prefix; the MCP server namespace is enough.
+Every REST endpoint has a mirrored MCP tool with identical semantics. Tool names use plain `verb_resource` form (e.g. `create_strategy_autonomous`, `list_trades`, `get_market_data`) — no project prefix; the MCP server namespace is enough.
 
 Tool descriptions include parameters, return shapes, and access tier. All tools enforce the same auth as their REST counterparts.
 
@@ -466,7 +462,7 @@ class StrategyCreateManualRequest(BaseModel):
     execution_config: ExecutionConfig | None = None
 
 class StrategyDetail(BaseModel):
-    id: str                                    # Hank's local UUID
+    id: str                                    # agent's local UUID
     mangrove_id: str                           # Mangrove's strategy ID
     name: str
     asset: str
@@ -504,13 +500,14 @@ class OrderIntent(BaseModel):
     take_profit: float | None = None
 
 class Evaluation(BaseModel):
+    """A record of one cron-tick evaluation. OrderIntents come from the SDK,
+    not from local logic — the agent does not evaluate strategies itself."""
     id: str
     strategy_id: str
     timestamp: datetime
-    market_snapshot: dict                        # last bar + indicators
-    signals_fired: list[dict]
-    order_intents: list[OrderIntent]
-    positions_snapshot: list[Position]
+    market_snapshot: dict                        # last bar of data passed to SDK
+    sdk_response: dict                           # verbatim response from mangroveai.execution.evaluate()
+    order_intents: list[OrderIntent]             # extracted from sdk_response for easy querying
     duration_ms: int
     status: Literal["ok", "error", "skipped"]
     error_msg: str | None
@@ -587,7 +584,7 @@ CREATE INDEX idx_wallets_chain ON wallets(chain, chain_id);
 
 -- Strategies: local cache of Mangrove strategies (Mangrove is source of truth)
 CREATE TABLE strategies (
-    id TEXT PRIMARY KEY,                          -- Hank's UUID
+    id TEXT PRIMARY KEY,                          -- agent's UUID
     mangrove_id TEXT UNIQUE NOT NULL,             -- Mangrove's strategy ID
     name TEXT NOT NULL,
     asset TEXT NOT NULL,
@@ -621,10 +618,9 @@ CREATE TABLE evaluations (
     id TEXT PRIMARY KEY,
     strategy_id TEXT NOT NULL REFERENCES strategies(id),
     timestamp TEXT NOT NULL,
-    market_snapshot_json TEXT NOT NULL,
-    signals_fired_json TEXT NOT NULL,
-    order_intents_json TEXT NOT NULL,
-    positions_snapshot_json TEXT NOT NULL,
+    market_snapshot_json TEXT NOT NULL,           -- data sent to the SDK
+    sdk_response_json TEXT NOT NULL,              -- verbatim response from mangroveai.execution.evaluate()
+    order_intents_json TEXT NOT NULL,             -- extracted from sdk_response for querying
     duration_ms INTEGER NOT NULL,
     status TEXT NOT NULL,                         -- ok | error | skipped
     error_msg TEXT
@@ -696,10 +692,10 @@ Standard error response:
 | Code | HTTP | When |
 |------|------|------|
 | `AUTH_MISSING_API_KEY` | 401 | `X-API-Key` header not provided |
-| `AUTH_INVALID_API_KEY` | 401 | Key doesn't match `HANK_API_KEY` |
+| `AUTH_INVALID_API_KEY` | 401 | Key doesn't match the configured `API_KEY` |
 | `VALIDATION_ERROR` | 400 | Pydantic validation failed; details in `message` |
 | `CONFIRMATION_REQUIRED` | 400 | Live deploy/stop/withdraw without `confirm: true` |
-| `WALLET_NOT_FOUND` | 404 | Address not in Hank's wallet store |
+| `WALLET_NOT_FOUND` | 404 | Address not in the agent's wallet store |
 | `WALLET_ALREADY_EXISTS` | 409 | Wallet with that address already stored |
 | `STRATEGY_NOT_FOUND` | 404 | Strategy ID not found |
 | `STRATEGY_INVALID_STATUS_TRANSITION` | 400 | Illegal transition (e.g., draft → live) |
@@ -710,9 +706,10 @@ Standard error response:
 | `SIGNING_ERROR` | 500 | Local signing failed (bad key, wallet corruption) |
 | `EVALUATION_ERROR` | 500 | Strategy evaluator raised; details logged |
 | `SCHEDULER_ERROR` | 500 | APScheduler job registration/cancellation failed |
+| `CHAIN_NOT_SUPPORTED_IN_V1` | 501 | User requested XRPL/Solana wallet creation or live execution |
 | `INTERNAL_ERROR` | 500 | Catch-all; details in server logs |
 
-All errors carry a `correlation_id` for cross-referencing against Hank's logs.
+All errors carry a `correlation_id` for cross-referencing against the agent's logs.
 
 ---
 
@@ -721,9 +718,9 @@ All errors carry a `correlation_id` for cross-referencing against Hank's logs.
 **Model:** single-user API key authentication.
 
 **Flow:**
-1. User sets `HANK_API_KEY` env var (local) or GCP Secret (Cloud Run).
+1. The `API_KEY` config value is loaded at startup via the template's config loader (see [Configuration](#configuration)).
 2. Requests include `X-API-Key: <key>`.
-3. Middleware validates against `HANK_API_KEY`; rejects with 401 if missing or invalid.
+3. Middleware validates against the configured `API_KEY`; rejects with 401 if missing or invalid.
 4. Free tier endpoints bypass the middleware.
 
 **MCP auth:** MCP is served over Streamable HTTP transport. The MCP client (Claude Code, Claude Desktop, custom agent) sends the API key as a standard HTTP header on every request to `/mcp`.
@@ -732,18 +729,18 @@ Client-side configuration example (`.mcp.json` in a Claude Code project):
 ```json
 {
   "mcpServers": {
-    "hank": {
+    "defi-agent": {
       "transport": "http",
       "url": "http://localhost:8080/mcp",
       "headers": {
-        "X-API-Key": "${HANK_API_KEY}"
+        "X-API-Key": "<your-configured-api-key>"
       }
     }
   }
 }
 ```
 
-Server-side, Hank's FastAPI middleware inspects `X-API-Key` identically for REST and MCP requests — the MCP mount at `/mcp` is just another FastAPI route group. If the key is missing or invalid, the MCP tool call returns an MCP-level error with `code: AUTH_INVALID_API_KEY` (mapped to 401 for REST). Discovery tools (`status`, `list_tools`) bypass auth.
+Server-side, the agent's FastAPI middleware inspects `X-API-Key` identically for REST and MCP requests — the MCP mount at `/mcp` is just another FastAPI route group. If the key is missing or invalid, the MCP tool call returns an MCP-level error with `code: AUTH_INVALID_API_KEY` (mapped to 401 for REST). Discovery tools (`status`, `list_tools`) bypass auth.
 
 **Storage:** No user accounts, no sessions, no tokens. Single shared secret per deployment.
 
@@ -765,9 +762,9 @@ from mangroveai import MangroveAI
 client = MangroveAI()  # reads env
 ```
 
-**Failure handling:** SDK raises `APIError`, `NotFoundError`, `RateLimitError`. Hank's service layer catches these and re-raises as `SDKError` (502) with the original correlation_id preserved.
+**Failure handling:** SDK raises `APIError`, `NotFoundError`, `RateLimitError`. The agent's service layer catches these and re-raises as `SDKError` (502) with the original correlation_id preserved.
 
-**Retry:** SDK's built-in retry handles 429/5xx. Hank does not add additional retry.
+**Retry:** SDK's built-in retry handles 429/5xx. The agent does not add additional retry.
 
 ---
 
@@ -785,7 +782,7 @@ from mangrovemarkets import MangroveMarkets
 client = MangroveMarkets(base_url=os.environ["MANGROVEMARKETS_BASE_URL"])
 ```
 
-**Signing:** The SDK never touches private keys. `prepare_swap()` and `approve_token()` return unsigned transaction payloads; Hank's `wallet_manager` decrypts the key in memory, signs the payload, then calls `broadcast()` with the signed tx. Key is zeroed from memory immediately after.
+**Signing:** The SDK never touches private keys. `prepare_swap()` and `approve_token()` return unsigned transaction payloads; the agent's `wallet_manager` decrypts the key in memory, signs the payload, then calls `broadcast()` with the signed tx. Key is zeroed from memory immediately after.
 
 **Failure handling:** Same pattern as `mangroveai`.
 
@@ -797,7 +794,7 @@ client = MangroveMarkets(base_url=os.environ["MANGROVEMARKETS_BASE_URL"])
 
 **Master key source (priority order):**
 1. OS Keychain via `keyring` library (macOS Keychain, GNOME Keyring, Windows Credential Manager) — default
-2. `HANK_MASTER_KEY` env var — fallback for Cloud Run / CI
+2. Config value `MASTER_KEY_ENV_FALLBACK` (resolved via the template's config loader, can reference a secret) — fallback for CI or other environments without a keychain
 
 **Scheme:**
 - Master key generated once on first wallet creation, stored in keychain
@@ -810,7 +807,7 @@ client = MangroveMarkets(base_url=os.environ["MANGROVEMARKETS_BASE_URL"])
 
 **Library:** `apscheduler` with `BackgroundScheduler` and SQLAlchemy job store.
 
-**Job store:** the same SQLite DB as Hank's data (`HANK_DB_PATH`) — survives process restarts.
+**Job store:** the same SQLite DB as the agent's data (config value `DB_PATH`) — survives process restarts.
 
 **Timeframe mapping:**
 | Strategy timeframe | Cron expression |
@@ -834,47 +831,71 @@ client = MangroveMarkets(base_url=os.environ["MANGROVEMARKETS_BASE_URL"])
 
 ## Configuration
 
-### Required environment variables
+The agent uses the existing app-in-a-box config system — no invented `.env` files, no parallel layer. Values live in `server/src/config/{environment}-config.json`, with required keys declared in `server/src/config/configuration-keys.json`. The `ENVIRONMENT` env var selects which file to load. Secret values can be referenced using the existing `secret:NAME:PROPERTY` syntax; literal values are fine for local dev.
 
-| Variable | Purpose |
-|----------|---------|
-| `MANGROVE_API_KEY` | Shared between both SDKs; `prod_*` or `dev_*` prefix |
-| `HANK_API_KEY` | Hank's own auth |
-| `ENVIRONMENT` | `local` \| `dev` \| `test` \| `prod` |
+### `configuration-keys.json` (agent + x402, both required)
 
-### Optional environment variables
-
-| Variable | Default |
-|----------|---------|
-| `MANGROVEAI_BASE_URL` | auto-detect from API key prefix |
-| `MANGROVEMARKETS_BASE_URL` | `http://localhost:8080` |
-| `HANK_DB_PATH` | `./hank.db` |
-| `HANK_MASTER_KEY` | OS keychain |
-
-### Per-environment config JSON (`server/src/config/{env}-config.json`)
+x402 keys from the template stay required — payment middleware needs them at startup even if no agent endpoints are payment-gated yet.
 
 ```json
 {
-  "service_name": "hank",
-  "log_level": "INFO",
-  "backtest": {
-    "autonomous_candidate_count": 7,
-    "candidate_filter": {
-      "min_win_rate": 0.51,
-      "min_total_trades": 10
-    },
-    "default_lookback_months": 3
-  },
-  "scheduler": {
-    "max_instances": 1,
-    "coalesce": true,
-    "misfire_grace_time_seconds": 60
-  },
-  "logs": {
-    "retention_days": 90
-  }
+  "required": [
+    "AUTH_ENABLED",
+    "API_KEY",
+    "MANGROVE_API_KEY",
+    "MANGROVEMARKETS_BASE_URL",
+    "DB_PATH",
+    "KEYRING_SERVICE_NAME",
+    "MASTER_KEY_ENV_FALLBACK",
+    "BACKTEST_CANDIDATE_COUNT",
+    "BACKTEST_MIN_WIN_RATE",
+    "BACKTEST_MIN_TRADES",
+    "BACKTEST_DEFAULT_LOOKBACK_MONTHS",
+    "LOG_RETENTION_DAYS",
+    "X402_FACILITATOR_URL",
+    "X402_NETWORK",
+    "X402_PAY_TO",
+    "X402_USDC_CONTRACT",
+    "X402_HELLO_MANGROVE_PRICE",
+    "X402_CDP_API_KEY_ID",
+    "X402_CDP_API_KEY_SECRET"
+  ],
+  "full_app_keys": []
 }
 ```
+
+### Example `local-config.json`
+
+```json
+{
+  "AUTH_ENABLED": true,
+  "API_KEY": "local-dev-key",
+  "MANGROVE_API_KEY": "dev_...",
+  "MANGROVEMARKETS_BASE_URL": "http://localhost:8080",
+  "DB_PATH": "./agent.db",
+  "KEYRING_SERVICE_NAME": "defi-agent",
+  "MASTER_KEY_ENV_FALLBACK": "",
+  "BACKTEST_CANDIDATE_COUNT": 7,
+  "BACKTEST_MIN_WIN_RATE": 0.51,
+  "BACKTEST_MIN_TRADES": 10,
+  "BACKTEST_DEFAULT_LOOKBACK_MONTHS": 3,
+  "LOG_RETENTION_DAYS": 90,
+  "X402_FACILITATOR_URL": "https://x402.org/facilitator",
+  "X402_NETWORK": "eip155:84532",
+  "X402_PAY_TO": "0xde991861bB3e7078015826Fad749de398F6ec1f6",
+  "X402_USDC_CONTRACT": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+  "X402_HELLO_MANGROVE_PRICE": "50000",
+  "X402_CDP_API_KEY_ID": "",
+  "X402_CDP_API_KEY_SECRET": ""
+}
+```
+
+### Notes
+
+- `API_KEY`, `MANGROVE_API_KEY`, and `MASTER_KEY_ENV_FALLBACK` are the secret-sensitive values. In environments with Secret Manager configured, they can be written as `"secret:mangrove-api-key:value"`; local deployments use literal strings.
+- `MASTER_KEY_ENV_FALLBACK` is intentionally non-required at runtime — if empty, the agent uses the OS keychain. Set it only for environments without a keychain (e.g., CI).
+- `full_app_keys` is empty for v1 (no Postgres or Redis).
+- The `MANGROVEAI_BASE_URL` is auto-detected by the SDK from the `MANGROVE_API_KEY` prefix (`prod_*` vs `dev_*`); no separate config key needed.
 
 ---
 
@@ -882,23 +903,24 @@ client = MangroveMarkets(base_url=os.environ["MANGROVEMARKETS_BASE_URL"])
 
 All routes and MCP tools delegate to these services. Never duplicate business logic between the two interfaces.
 
+**Service principle:** if a service would just forward arguments to an SDK call and return the result, it doesn't exist. Routes call the SDK clients directly (via `shared/clients/mangrove.py` singletons). Services exist only when they add orchestration the SDK doesn't provide.
+
+The 8 services that stay:
+
 | Module | Responsibility |
 |--------|---------------|
-| `services/wallet_manager.py` | Key gen, encryption, decryption, local signing |
-| `services/strategy_service.py` | Strategy CRUD (wraps `mangroveai.strategies`), local cache sync |
-| `services/candidate_generator.py` | Autonomous skill: goal → 5–10 signal combos (uses `mangroveai.signals` + `mangroveai.kb`) |
+| `services/wallet_manager.py` | Key gen, Fernet encryption, local signing of unsigned txs from the SDK |
+| `services/strategy_service.py` | Cron-tick orchestration: fetch market data, call `mangroveai.execution.evaluate()`, dispatch returned orders to `order_executor`. Strategy CRUD against `mangroveai.strategies` + local cache writes. No local signal evaluation or risk logic. |
+| `services/candidate_generator.py` | Autonomous: goal → 5–10 signal combos (deterministic heuristics over the `mangroveai.signals` catalog) |
 | `services/backtest_service.py` | Quick + full backtest orchestration; filter + rank by IRR |
-| `services/signal_service.py` | Signal discovery (wraps `mangroveai.signals`) |
-| `services/market_data.py` | OHLCV, market data, trending, global (wraps `mangroveai.crypto_assets`) |
-| `services/on_chain.py` | Smart money, whale activity, holders (wraps `mangroveai.on_chain`) |
-| `services/dex_service.py` | DEX venue/pair/quote/swap (wraps `mangrovemarkets.dex`) |
-| `services/portfolio_service.py` | Portfolio value, P&L, history (wraps `mangrovemarkets.portfolio`) |
-| `services/kb_service.py` | KB search and glossary (wraps `mangroveai.kb`) |
-| `services/strategy_evaluator.py` | Pure function: (strategy, market_data, positions) → OrderIntent[] |
-| `services/order_executor.py` | OrderIntent → DEX swap (live) or simulated fill (paper) |
+| `services/order_executor.py` | The single execution path for all DEX swaps. Takes an `OrderIntent` (from `strategy_service` for cron-driven trades, or built from a user request for the `POST /dex/swap` route). Orchestrates the full 6-step flow against `mangrovemarkets.dex` (quote → conditional approve → sign → broadcast → poll → prepare → sign → broadcast → poll). Branches paper vs live. |
 | `services/scheduler_service.py` | APScheduler wrapper: register, cancel, list active jobs |
 | `services/trade_log.py` | SQLite writes: evaluations, trades, positions |
 | `services/allocation_service.py` | Local allocation accounting for live strategies |
+
+**Routes that call SDKs directly (no service layer):** signal listing, market data (OHLCV, current data, trending, global), on-chain analytics, KB search/glossary, portfolio (value, P&L, tokens, DeFi, history), DEX venue/pair listing, DEX quote. Each route handler imports the appropriate SDK client from `shared/clients/mangrove.py`, calls the method, returns the response. Adding a wrapper service for these would only duplicate the SDK's interface.
+
+**Architectural note:** there is no `strategy_evaluator.py` module. Strategy evaluation (signal firing, position sizing, risk gates, cooldowns, volatility adjustments) is entirely the responsibility of `mangroveai.execution.evaluate()`. The agent calls the SDK and executes whatever `OrderIntent[]` comes back. Reimplementing any of that logic locally would duplicate upstream work and inevitably drift out of sync.
 
 ---
 

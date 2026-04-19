@@ -168,7 +168,22 @@ async def agent_error_handler(request: Request, exc: AgentError) -> JSONResponse
 
     Returns the standard error response shape with the exception's http_status.
     Register via `app.add_exception_handler(AgentError, agent_error_handler)`.
+
+    Logs a structured event with level=error. The event name is the error code
+    lowercased (e.g. `wallet.not_found`), so tailers can grep per-class.
     """
+    # Lazy import so errors.py stays usable by tests that don't configure logging.
+    from src.shared.logging import get_logger
+
+    event_name = exc.code.lower().replace("_", ".")
+    get_logger(__name__).error(
+        event_name,
+        code=exc.code,
+        message=exc.message,
+        suggestion=exc.suggestion,
+        correlation_id=exc.correlation_id,
+        path=str(request.url.path),
+    )
     return JSONResponse(
         status_code=exc.http_status,
         content=exc.to_dict(),

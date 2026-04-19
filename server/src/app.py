@@ -15,10 +15,17 @@ from fastapi import FastAPI, Request
 from x402.http.middleware.fastapi import payment_middleware
 
 from src.api.router import api_router, x402_router
+from src.config import app_config
 from src.health import health_payload
 from src.shared.errors import AgentError, agent_error_handler
+from src.shared.logging import CorrelationIdMiddleware, configure as configure_logging, get_logger
 from src.shared.x402.config import get_network, get_pay_to
 from src.shared.x402.server import get_x402_server
+
+# Configure structured logging at import time so any log calls below
+# (including x402 setup errors) are already structured.
+configure_logging(str(app_config.ENVIRONMENT))
+_log = get_logger(__name__)
 
 
 def _setup_x402():
@@ -51,7 +58,9 @@ async def lifespan(application: FastAPI):
     from src.mcp.server import create_mcp_server
     mcp_server = create_mcp_server()
     application.mount("/mcp", mcp_server.streamable_http_app())
+    _log.info("app.startup", version=application.version, environment=str(app_config.ENVIRONMENT))
     yield
+    _log.info("app.shutdown")
 
 
 app = FastAPI(
@@ -87,6 +96,7 @@ async def x402_middleware(request: Request, call_next):
 
 
 app.add_exception_handler(AgentError, agent_error_handler)
+app.add_middleware(CorrelationIdMiddleware)
 
 app.include_router(api_router)
 app.include_router(x402_router)

@@ -18,7 +18,8 @@ from src.api.router import api_router, x402_router
 from src.config import app_config
 from src.health import health_payload
 from src.shared.errors import AgentError, agent_error_handler
-from src.shared.logging import CorrelationIdMiddleware, configure as configure_logging, get_logger
+from src.shared.logging import CorrelationIdMiddleware, get_logger
+from src.shared.logging import configure as configure_logging
 from src.shared.x402.config import get_network, get_pay_to
 from src.shared.x402.server import get_x402_server
 

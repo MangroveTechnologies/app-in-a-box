@@ -19,14 +19,13 @@ from src.shared.errors import (
     SigningError,
     StrategyInvalidComposition,
     StrategyInvalidStatusTransition,
-    StrategyNoViableCandidates,
     StrategyNotFound,
+    StrategyNoViableCandidates,
     ValidationError,
     WalletAlreadyExists,
     WalletNotFound,
     agent_error_handler,
 )
-
 
 # (class, expected code, expected http status)
 ERROR_CASES = [

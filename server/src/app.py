@@ -27,14 +27,14 @@ def _setup_x402():
     pay_to = get_pay_to()
 
     routes = {
-        "GET /api/x402/easter-egg": {
+        "GET /api/x402/hello-mangrove": {
             "accepts": {
                 "scheme": "exact",
                 "network": network,
                 "payTo": pay_to,
                 "price": "$0.05",
             },
-            "resource": "Easter egg",
+            "resource": "hello_mangrove",
             "description": "Thank you for supporting the project and strengthening the ecosystem",
         },
     }
@@ -72,10 +72,7 @@ app = FastAPI(
     lifespan=lifespan,
     openapi_tags=[
         {"name": "discovery", "description": "API and tool discovery endpoints (free, no auth)"},
-        {"name": "echo", "description": "Echo/reflect endpoints (free, no auth)"},
-        {"name": "items", "description": "Items CRUD -- in-memory (auth-gated, requires API key)"},
-        {"name": "notes", "description": "Notes CRUD -- PostgreSQL-backed (auth-gated, requires API key and --profile full)"},
-        {"name": "x402", "description": "x402 payment-gated endpoints"},
+        {"name": "x402", "description": "x402 payment-gated endpoints (e.g. hello_mangrove)"},
     ],
 )
 

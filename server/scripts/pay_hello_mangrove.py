@@ -4,7 +4,7 @@ Step through the x402 payment flow manually. All config values are loaded
 from the app's config system (src/config/{ENVIRONMENT}-config.json).
 
 Usage:
-    ENVIRONMENT=local python scripts/pay_easter_egg.py
+    ENVIRONMENT=local python scripts/pay_hello_mangrove.py
 
 Requires:
     - src/config/local-config.json with x402 settings
@@ -84,7 +84,7 @@ def setup_server():
     server.register("base-sepolia", ExactEvmScheme())
 
     routes = {
-        "GET /api/x402/easter-egg": RouteConfig(
+        "GET /api/x402/hello-mangrove": RouteConfig(
             accepts=HTTPPaymentOption(
                 scheme="exact", network=network, pay_to=pay_to, price="$0.05",
             ),
@@ -98,10 +98,10 @@ def setup_server():
     async def x402_mw(request: Request, call_next):
         return await mw(request, call_next)
 
-    @app.get("/api/x402/easter-egg")
-    async def easter_egg():
-        from src.services.easter_egg import get_easter_egg
-        return get_easter_egg()
+    @app.get("/api/x402/hello-mangrove")
+    async def hello_mangrove():
+        from src.services.hello_mangrove import get_hello_mangrove
+        return get_hello_mangrove()
 
     return app
 
@@ -134,11 +134,11 @@ async def main():
     asgi = httpx.ASGITransport(app=app)
 
     # -- Step 1 --
-    input("  Step 1: Hit /api/x402/easter-egg with NO credentials. Press Enter...")
+    input("  Step 1: Hit /api/x402/hello-mangrove with NO credentials. Press Enter...")
     print()
 
     async with httpx.AsyncClient(transport=asgi, base_url="http://test") as client:
-        resp = await client.get("/api/x402/easter-egg")
+        resp = await client.get("/api/x402/hello-mangrove")
 
     print(f"  Response: HTTP {resp.status_code}")
     if resp.status_code == 402:
@@ -171,7 +171,7 @@ async def main():
 
     print("  Signing payment and sending...")
     async with httpx.AsyncClient(transport=x402_transport, base_url="http://test") as client:
-        resp = await client.get("/api/x402/easter-egg")
+        resp = await client.get("/api/x402/hello-mangrove")
 
     print()
     print(f"  Response: HTTP {resp.status_code}")

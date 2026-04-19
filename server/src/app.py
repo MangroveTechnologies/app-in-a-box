@@ -16,6 +16,7 @@ from x402.http.middleware.fastapi import payment_middleware
 
 from src.api.router import api_router, x402_router
 from src.health import health_payload
+from src.shared.errors import AgentError, agent_error_handler
 from src.shared.x402.config import get_network, get_pay_to
 from src.shared.x402.server import get_x402_server
 
@@ -84,6 +85,8 @@ async def x402_middleware(request: Request, call_next):
         return await call_next(request)
     return await x402_handler(request, call_next)
 
+
+app.add_exception_handler(AgentError, agent_error_handler)
 
 app.include_router(api_router)
 app.include_router(x402_router)

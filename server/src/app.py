@@ -57,13 +57,17 @@ x402_handler = _setup_x402()
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     from src.mcp.server import create_mcp_server
+    from src.services.scheduler_service import shutdown as scheduler_shutdown
+    from src.services.scheduler_service import start as scheduler_start
     from src.shared.db.sqlite import init_db
 
     init_db()  # emits db.migrated log event; idempotent
+    scheduler_start()  # emits scheduler.started; non-blocking BackgroundScheduler
     mcp_server = create_mcp_server()
     application.mount("/mcp", mcp_server.streamable_http_app())
     _log.info("app.startup", version=application.version, environment=str(app_config.ENVIRONMENT))
     yield
+    scheduler_shutdown()  # wait=False so we don't block on in-flight ticks
     _log.info("app.shutdown")
 
 

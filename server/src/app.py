@@ -15,9 +15,18 @@ from fastapi import FastAPI, Request
 from x402.http.middleware.fastapi import payment_middleware
 
 from src.api.router import api_router, x402_router
+from src.config import app_config
 from src.health import health_payload
+from src.shared.errors import AgentError, agent_error_handler
+from src.shared.logging import CorrelationIdMiddleware, get_logger
+from src.shared.logging import configure as configure_logging
 from src.shared.x402.config import get_network, get_pay_to
 from src.shared.x402.server import get_x402_server
+
+# Configure structured logging at import time so any log calls below
+# (including x402 setup errors) are already structured.
+configure_logging(str(app_config.ENVIRONMENT))
+_log = get_logger(__name__)
 
 
 def _setup_x402():
@@ -27,14 +36,14 @@ def _setup_x402():
     pay_to = get_pay_to()
 
     routes = {
-        "GET /api/x402/easter-egg": {
+        "GET /api/x402/hello-mangrove": {
             "accepts": {
                 "scheme": "exact",
                 "network": network,
                 "payTo": pay_to,
                 "price": "$0.05",
             },
-            "resource": "Easter egg",
+            "resource": "hello_mangrove",
             "description": "Thank you for supporting the project and strengthening the ecosystem",
         },
     }
@@ -48,9 +57,14 @@ x402_handler = _setup_x402()
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     from src.mcp.server import create_mcp_server
+    from src.shared.db.sqlite import init_db
+
+    init_db()  # emits db.migrated log event; idempotent
     mcp_server = create_mcp_server()
     application.mount("/mcp", mcp_server.streamable_http_app())
+    _log.info("app.startup", version=application.version, environment=str(app_config.ENVIRONMENT))
     yield
+    _log.info("app.shutdown")
 
 
 app = FastAPI(
@@ -72,10 +86,7 @@ app = FastAPI(
     lifespan=lifespan,
     openapi_tags=[
         {"name": "discovery", "description": "API and tool discovery endpoints (free, no auth)"},
-        {"name": "echo", "description": "Echo/reflect endpoints (free, no auth)"},
-        {"name": "items", "description": "Items CRUD -- in-memory (auth-gated, requires API key)"},
-        {"name": "notes", "description": "Notes CRUD -- PostgreSQL-backed (auth-gated, requires API key and --profile full)"},
-        {"name": "x402", "description": "x402 payment-gated endpoints"},
+        {"name": "x402", "description": "x402 payment-gated endpoints (e.g. hello_mangrove)"},
     ],
 )
 
@@ -87,6 +98,9 @@ async def x402_middleware(request: Request, call_next):
         return await call_next(request)
     return await x402_handler(request, call_next)
 
+
+app.add_exception_handler(AgentError, agent_error_handler)
+app.add_middleware(CorrelationIdMiddleware)
 
 app.include_router(api_router)
 app.include_router(x402_router)

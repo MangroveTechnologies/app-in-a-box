@@ -89,8 +89,8 @@ def _ensure_initialized() -> x402ResourceServer:
     return server
 
 
-def build_easter_egg_requirements() -> dict:
-    """Build payment requirements for the easter egg resource.
+def build_hello_mangrove_requirements() -> dict:
+    """Build payment requirements for the hello_mangrove resource.
 
     Returns a dict suitable for JSON serialization, matching the x402 402 response format.
     """
@@ -109,8 +109,8 @@ def build_easter_egg_requirements() -> dict:
     payment_required = server.create_payment_required_response(
         requirements,
         ResourceInfo(
-            url="mcp://easter_egg",
-            description="Easter egg message -- $0.05 USDC donation",
+            url="mcp://hello_mangrove",
+            description="hello_mangrove message — $0.05 USDC donation",
         ),
         "Payment required",
     )

@@ -3,44 +3,17 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
+    container_name: defi-agent
     ports:
       - "8080:8080"
     environment:
       - ENVIRONMENT=local
+    volumes:
+      # Persist SQLite DB + config across container restarts
+      - ./agent.db:/app/agent.db
+      - ./server/src/config/local-config.json:/app/src/config/local-config.json:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 5
-
-  postgres:
-    profiles: ["full"]
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: app_local_db
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-  redis:
-    profiles: ["full"]
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-volumes:
-  pgdata:

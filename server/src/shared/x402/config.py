@@ -27,8 +27,8 @@ def get_usdc_contract() -> str:
     return str(_get_config().X402_USDC_CONTRACT)
 
 
-def get_easter_egg_price() -> str:
-    return str(_get_config().X402_EASTER_EGG_PRICE)
+def get_hello_mangrove_price() -> str:
+    return str(_get_config().X402_HELLO_MANGROVE_PRICE)
 
 
 def get_cdp_api_key_id() -> str:

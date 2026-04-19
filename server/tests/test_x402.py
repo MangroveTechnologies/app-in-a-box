@@ -10,8 +10,8 @@ os.environ.setdefault("ENVIRONMENT", "test")
 from src.shared.x402.config import (
     get_cdp_api_key_id,
     get_cdp_api_key_secret,
-    get_easter_egg_price,
     get_facilitator_url,
+    get_hello_mangrove_price,
     get_network,
     get_pay_to,
     get_usdc_contract,
@@ -20,7 +20,7 @@ from src.shared.x402.config import (
 
 def test_config_values_loaded_from_json():
     """All x402 config values come from test-config.json."""
-    assert get_easter_egg_price() == "50000"
+    assert get_hello_mangrove_price() == "50000"
     assert get_pay_to().startswith("0x")
     assert len(get_pay_to()) == 42
     assert get_network().startswith("eip155:")

@@ -53,9 +53,9 @@ Run `/tutorial` for an interactive walkthrough that builds a trading app using t
 - **MCP:** `/mcp` (all tiers via FastMCP)
 
 ### Three-Tier Access
-- **Free:** No credentials (health, echo, discovery)
+- **Free:** No credentials (health, discovery)
 - **Auth:** API key in `X-API-Key` header
-- **x402:** Payment or API key bypass
+- **x402:** Payment or API key bypass (currently: `hello_mangrove` demo route)
 
 ### Service Layer Pattern
 Routes and MCP tools both call shared services in `server/src/services/`. Never duplicate business logic.
@@ -73,15 +73,12 @@ app-in-a-box/
 │   │   ├── mcp/          # MCP tools
 │   │   ├── services/     # Business logic
 │   │   └── shared/       # Auth, DB, x402 utilities
-│   ├── tests/
-│   └── db/
-├── plugin/               # Claude Code plugin for end users
+│   └── tests/
 ├── tutorials/            # Tutorial reference docs
 ├── docs/                 # Generated design docs
 ├── assets/               # Branding files
 ├── branding.json         # Branding configuration
-├── docker-compose.yml
-└── infra/terraform/
+└── docker-compose.yml
 ```
 
 ## Key Conventions
@@ -105,27 +102,20 @@ app-in-a-box/
 Same as above, plus add `validate_api_key()` check in route and `has_valid_api_key()` in MCP tool.
 
 ### x402 payment-gated endpoint
-Route goes under `x402_router`. See `server/src/api/routes/easter_egg.py` for the pattern.
+Route goes under `x402_router`. See `server/src/api/routes/hello_mangrove.py` for the pattern.
 
 ## Deployment
 
-### Local
+### Local (the only supported mode for v1)
 ```bash
-docker compose up -d --build              # App only
-docker compose up -d --build --profile full  # App + PostgreSQL + Redis
+docker compose up -d --build
 ```
 
-### Cloud (GCP)
-```bash
-cd infra/terraform
-terraform init -backend-config=backend-dev.hcl
-terraform plan -var-file=environment-dev.tfvars
-```
+Cloud deployment (Cloud Run, persistent cloud storage) is out of scope for v1.
 
 ### CI/CD
 GitHub Actions runs on push to main and PRs:
 - `ci.yml` — lint (ruff) + test (pytest)
-- `deploy-cloudrun.yaml` — build + deploy to Cloud Run
 
 ## Configuration
 

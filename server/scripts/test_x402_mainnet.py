@@ -6,7 +6,7 @@ and network configured in the app's config file.
 Flow:
 1. Loads config from src/config/{ENVIRONMENT}-config.json (same as the app)
 2. Creates a FastAPI app with x402 middleware
-3. Client hits easter-egg endpoint -> gets 402 with payment requirements
+3. Client hits hello-mangrove endpoint -> gets 402 with payment requirements
 4. x402 SDK auto-signs payment with wallet
 5. Server verifies via facilitator -> content delivered -> settled on-chain
 
@@ -40,7 +40,7 @@ async def main():
     from src.shared.x402.config import (
         get_cdp_api_key_id,
         get_cdp_api_key_secret,
-        get_easter_egg_price,
+        get_hello_mangrove_price,
         get_facilitator_url,
         get_network,
         get_pay_to,
@@ -61,7 +61,7 @@ async def main():
     print(f"  Network:     {network}")
     print(f"  Facilitator: {facilitator_url}")
     print(f"  Pay to:      {pay_to}")
-    print(f"  Price:       {get_easter_egg_price()} base units ($0.05 USDC)")
+    print(f"  Price:       {get_hello_mangrove_price()} base units ($0.05 USDC)")
     print("=" * 60)
     print()
 
@@ -114,7 +114,7 @@ async def main():
     server.register("base-sepolia", ExactEvmScheme())
 
     routes = {
-        "GET /api/x402/easter-egg": RouteConfig(
+        "GET /api/x402/hello-mangrove": RouteConfig(
             accepts=HTTPPaymentOption(
                 scheme="exact", network=network, pay_to=pay_to, price="$0.05",
             ),
@@ -128,10 +128,10 @@ async def main():
     async def x402_mw(request: Request, call_next):
         return await mw(request, call_next)
 
-    @app.get("/api/x402/easter-egg")
-    async def easter_egg():
-        from src.services.easter_egg import get_easter_egg
-        return get_easter_egg()
+    @app.get("/api/x402/hello-mangrove")
+    async def hello_mangrove():
+        from src.services.hello_mangrove import get_hello_mangrove
+        return get_hello_mangrove()
 
     print("  Server created")
 
@@ -141,7 +141,7 @@ async def main():
     from fastapi.testclient import TestClient
 
     with TestClient(app, raise_server_exceptions=False) as client:
-        resp = client.get("/api/x402/easter-egg")
+        resp = client.get("/api/x402/hello-mangrove")
         print(f"  Status: {resp.status_code}")
         if resp.status_code == 500:
             print(f"  Server error: {resp.text[:500]}")
@@ -178,7 +178,7 @@ async def main():
 
     print("  Sending payment...")
     async with httpx.AsyncClient(transport=x402_transport, base_url="http://testserver") as http:
-        resp = await http.get("/api/x402/easter-egg")
+        resp = await http.get("/api/x402/hello-mangrove")
 
     print(f"  Status: {resp.status_code}")
 

@@ -15,8 +15,8 @@ import json
 from src.shared.x402.config import get_pay_to
 
 
-def test_easter_egg_without_credentials_returns_402(client):
-    resp = client.get("/api/x402/easter-egg")
+def test_hello_mangrove_without_credentials_returns_402(client):
+    resp = client.get("/api/x402/hello-mangrove")
     assert resp.status_code == 402
 
     payment_header = resp.headers.get("payment-required")
@@ -30,18 +30,18 @@ def test_easter_egg_without_credentials_returns_402(client):
     assert accept["payTo"] == get_pay_to()
 
 
-def test_easter_egg_with_api_key_returns_message(client):
-    resp = client.get("/api/x402/easter-egg", headers={"X-API-Key": "test-key-1"})
+def test_hello_mangrove_with_api_key_returns_message(client):
+    resp = client.get("/api/x402/hello-mangrove", headers={"X-API-Key": "test-key-1"})
     assert resp.status_code == 200
     data = resp.json()
     assert "Thank you for supporting the project" in data["message"]
     assert "timestamp" in data
 
 
-def test_easter_egg_invalid_payment_returns_402(client):
+def test_hello_mangrove_invalid_payment_returns_402(client):
     """Mock/invalid payment signatures are correctly rejected by the real middleware."""
     resp = client.get(
-        "/api/x402/easter-egg",
+        "/api/x402/hello-mangrove",
         headers={"Payment-Signature": "invalid-signature"},
     )
     # Real middleware rejects invalid signatures -- this is correct behavior

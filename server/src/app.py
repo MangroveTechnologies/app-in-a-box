@@ -56,6 +56,9 @@ x402_handler = _setup_x402()
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     from src.mcp.server import create_mcp_server
+    from src.shared.db.sqlite import init_db
+
+    init_db()  # emits db.migrated log event; idempotent
     mcp_server = create_mcp_server()
     application.mount("/mcp", mcp_server.streamable_http_app())
     _log.info("app.startup", version=application.version, environment=str(app_config.ENVIRONMENT))

@@ -3,11 +3,11 @@
     <img src="assets/icon.png" alt="Mangrove" width="120" height="112">
   </a>
 
-  <h1>App-in-a-Box</h1>
+  <h1>defi-agent</h1>
 
   <p>
-    <strong>Ship faster with Claude Code.</strong><br>
-    A general-purpose FastAPI + Claude Code development template by <a href="https://mangrovedeveloper.ai">Mangrove Technologies</a>.
+    <strong>An AI trading bot built on the Mangrove API.</strong><br>
+    FastAPI + MCP. Autonomous strategy generation, cron-driven execution, full audit trail.
   </p>
 
   <p>
@@ -22,378 +22,241 @@
 
 ---
 
-## What's in the Box
+## What this is
 
-- **FastAPI** backend with REST + MCP dual protocol
-- **Claude Code development framework** — 4-phase design lifecycle (requirements → spec → architecture → plan)
-- **Agent-driven onboarding** — conversational setup that learns your project
-- **Claude Code plugin** — ready-made plugin for your app's end users
-- **Three-tier access control** — free, API key auth, x402 payment-gated
-- **PostgreSQL + Redis** — optional, via Docker profiles
-- **Docker + Terraform** — container-ready with GCP Cloud Run IaC
-- **GitHub Actions CI/CD** — lint, test, deploy
-- **Tutorial** — build a trading app step-by-step
+A local AI trading bot that:
+- Turns natural-language goals ("momentum on ETH") into backtested, ranked trading strategies via the [MangroveAI API](https://mangrovedeveloper.ai).
+- Runs live strategies on APScheduler cron jobs. Same evaluator path for paper and live.
+- Executes live swaps through [MangroveMarkets](https://github.com/MangroveTechnologies/MangroveMarkets). Client-side signing; SDK never touches your keys.
+- Logs every evaluation and trade to local SQLite for a full audit trail.
 
-## Quick Start
+**Real mainnet swap from the agent** (verified April 2026): [0x5c126e...c5565](https://basescan.org/tx/0x5c126e6be26fc736bcb3f11a8f4c699aeee754f6c0bf7e5b7aa2df6a859c5565)
 
-### With Claude Code (Recommended)
+---
+
+## Quick start (target: ≤ 5 minutes)
+
+You need:
+- **Docker** (or Python 3.10+ if you'd rather run bare)
+- **A MangroveAI API key** — free from https://mangrovedeveloper.ai (dev_ or prod_ prefix)
+- **Claude Code** (optional, for the chat UX) — `npm install -g @anthropic-ai/claude-code`
+
+### 1. Clone
 
 ```bash
-git clone https://github.com/MangroveTechnologies/app-in-a-box.git my-app
-cd my-app
-claude
+git clone https://github.com/MangroveTechnologies/app-in-a-box.git defi-agent
+cd defi-agent
 ```
 
-The agent walks you through setup. No prior knowledge needed.
-
-### Without Claude Code
+### 2. Configure
 
 ```bash
-git clone https://github.com/MangroveTechnologies/app-in-a-box.git my-app
-cd my-app
-./init.sh --name my-app --gcp-project my-gcp-project --region us-central1
+cp server/src/config/local-example-config.json server/src/config/local-config.json
+$EDITOR server/src/config/local-config.json
+```
+
+You need to change one value:
+
+```json
+"MANGROVE_API_KEY": "dev_..."
+```
+
+All other defaults are sensible. For a hosted MangroveMarkets MCP server (skip running one yourself), also set:
+
+```json
+"MANGROVEMARKETS_BASE_URL": "https://mangrovemarkets-pcqgpciucq-uc.a.run.app"
+```
+
+### 3. Run
+
+```bash
+touch agent.db                     # Docker Desktop on macOS needs this so the bind mount is a file, not a dir
 docker compose up -d --build
-curl http://localhost:8080/health
 ```
 
-## Development Lifecycle
+First build takes a minute. Subsequent runs start in seconds.
 
-App-in-a-box includes a design-first workflow powered by Claude Code skills:
-
-| Phase | Skill | Output |
-|-------|-------|--------|
-| Onboarding | `/onboard` | Project identity, branding, context |
-| Requirements | `/requirements` | User stories, flow diagrams |
-| Specification | `/specification` | API contracts, data models |
-| Architecture | `/architecture` | System diagrams, module decisions |
-| Planning | `/plan` | Implementation tasks |
-| Building | Product owner agent | Working application |
-
-## Tutorial
-
-Build a trading app using the Mangrove developer API:
+### 4. Verify
 
 ```bash
-claude
-> /tutorial
+./scripts/verify_quickstart.sh
 ```
 
-Or read the docs in `tutorials/trading-app/`.
+This script checks the health endpoint, authenticates, lists the MCP tools, and confirms the agent is ready. Exits 0 on success (target runtime: under 300 seconds from a cold clone).
 
-## Project Structure
+### 5. Connect Claude Code
 
-```
-app-in-a-box/
-├── .claude/          # Development framework (skills, agents, rules)
-├── server/           # FastAPI application
-├── plugin/           # Claude Code plugin for end users
-├── tutorials/        # Tutorial reference docs
-├── docs/             # Generated design documents
-├── assets/           # Branding files
-├── branding.json     # Branding configuration
-└── init.sh           # Non-interactive setup
+Copy the MCP config and point Claude at the agent:
+
+```bash
+cp .mcp.json.example ~/.claude/mcp/defi-agent.json
+# Or add to a project's .mcp.json
 ```
 
-## Branding
+Then open a Claude Code session — the agent's 22 tools show up automatically.
 
-App-in-a-box is Mangrove-branded by default. To re-skin:
+### 6. Your first trade
 
-1. Edit `branding.json` with your project name, org, colors
-2. Replace files in `assets/` with your logos and icons
-3. Run `./init.sh` to propagate changes
+Open Claude Code and walk through the standard flow — every step is a natural-language request:
+
+1. **Ask the agent to create a wallet.** It generates a fresh EVM wallet, shows you the address and seed phrase (once), and prints deposit instructions.
+
+   > "Create a wallet on Base mainnet"
+
+   The agent recommends one wallet per project — no cross-contamination with your personal funds. Save the seed phrase offline immediately (paper, hardware wallet, password manager). After this response the seed phrase is encrypted to disk and never retrievable via the API.
+
+2. **Deposit a small test amount first.** Send 1–5 USDC (or equivalent) from your own wallet or exchange to the address the agent gave you. Do not skip this — confirm the transfer arrives before depositing anything larger.
+
+   > "Check my balance"
+
+3. **Create a strategy** — describe what you want in plain English.
+
+   > "Create an autonomous momentum strategy for ETH on a 1-hour timeframe"
+
+   The agent generates 5–10 candidates, runs quick backtests on each, filters by win-rate and trade-count, ranks by IRR, and runs a full backtest on the winner.
+
+4. **Backtest or re-test** with different parameters if you want.
+
+   > "Backtest that strategy over the last 6 months"
+
+5. **Activate it** — paper mode first, live when you trust the setup.
+
+   > "Activate the strategy in paper mode"
+
+   Paper simulates fills at market price; live executes real DEX swaps against the deposited funds. Moving to live requires an explicit confirm.
+
+6. **Monitor** — the agent logs every evaluation and every trade to local SQLite.
+
+   > "Show me my last 10 trades"
+
+**Why a fresh wallet per project?** Isolation. If a strategy misbehaves you only lose what's in the dedicated trading wallet, never your personal holdings. When you're done, swap the wallet back to USDC and leave it for the next experiment, or generate a new wallet.
 
 ---
 
-## User Guide
+## What the agent can do
 
-Everything you need to go from zero to a running application.
+All 22 core MCP tools (plus `hello_mangrove` x402 demo):
 
-### Prerequisites
+| Category | Tools |
+|---|---|
+| Discovery (free) | `status`, `list_tools` |
+| Wallet | `create_wallet`, `list_wallets`, `get_balances` |
+| DEX | `list_dex_venues`, `get_swap_quote`, `execute_swap` |
+| Market | `get_ohlcv`, `get_market_data` |
+| Signals | `list_signals` |
+| Strategy | `create_strategy_autonomous`, `create_strategy_manual`, `list_strategies`, `get_strategy`, `update_strategy_status`, `backtest_strategy`, `evaluate_strategy` |
+| Logs | `list_evaluations`, `list_trades`, `list_all_trades` |
+| Knowledge Base | `kb_search` |
 
-| Tool | Version | Install |
-|------|---------|---------|
-| **Python** | 3.10+ | [python.org](https://www.python.org/downloads/) or `brew install python` |
-| **Docker** | 20+ | [docker.com](https://docs.docker.com/get-docker/) |
-| **Claude Code** | Latest | `npm install -g @anthropic-ai/claude-code` |
-| **Git** | 2.x | [git-scm.com](https://git-scm.com/) |
-
-Claude Code requires an Anthropic API key. Set it before your first session:
-
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-```
-
-Or Claude Code will prompt you to sign in on first launch.
-
-### Step 1: Clone the Repo
-
-```bash
-git clone https://github.com/MangroveTechnologies/app-in-a-box.git my-app
-cd my-app
-```
-
-> **Tip:** Replace `my-app` with your project name. The onboarding agent will rename everything for you.
-
-### Step 2: Start Claude Code
-
-```bash
-claude
-```
-
-Claude detects a fresh app-in-a-box project and begins the onboarding conversation. It will ask you:
-
-1. **What are you building?** — Describe your app in plain language
-2. **Why are you building it?** — The problem it solves
-3. **What's your experience level?** — So the agent calibrates its guidance
-4. **Any preferences?** — Coding style, conventions, libraries
-5. **Project identity** — Name, description, branding
-
-The agent updates `branding.json` and `CLAUDE.md` with your answers. When you approve, it hands off to the next phase.
-
-### Step 3: Design Lifecycle
-
-After onboarding, run each skill in order. Each phase produces a document in `docs/` and waits for your approval before proceeding.
-
-#### `/requirements`
-
-The agent interviews you about what your app needs to do, then produces:
-- User stories (As a ___, I want ___, so that ___)
-- 3+ mermaid user flow diagrams covering 95% of use cases
-- Written to `docs/requirements.md`
-
-Review the diagrams and stories. Edit anything that's off. When satisfied, approve to proceed.
-
-#### `/specification`
-
-From your approved requirements, the agent generates:
-- API endpoint contracts (method, path, request/response, errors)
-- Data models with field types and constraints
-- Auth flows and error handling strategy
-- Written to `docs/specification.md`
-
-#### `/architecture`
-
-From the approved spec, the agent produces:
-- System architecture diagram (mermaid)
-- Data flow diagram
-- Sequence diagrams for key operations
-- Component diagram
-- Folder/file hierarchy
-- Module retention decisions (what stays, what gets removed)
-- Written to `docs/architecture.md`
-
-This is the **subtractive setup** step. App-in-a-box ships with everything (x402 payments, PostgreSQL, Redis, auth middleware). The architecture phase determines what your app actually needs and marks the rest for removal.
-
-#### `/plan`
-
-From the approved architecture, the agent generates:
-- Phased implementation plan with numbered tasks
-- Dependencies between tasks
-- Agent assignments (which subagent handles each task)
-- Cleanup step to remove unused scaffold modules
-- Written to `docs/implementation-plan.md`
-
-### Step 4: Build
-
-After you approve the plan, the product-owner agent activates. It reads `docs/implementation-plan.md` and drives implementation by delegating tasks to the agent workforce (backend-developer, frontend-developer, test-engineer, etc.).
-
-You stay in the loop — the product owner checks in for approval at key milestones.
-
-### Step 5: Run Locally
-
-```bash
-# App only
-docker compose up -d --build
-curl http://localhost:8080/health
-
-# App + PostgreSQL + Redis
-docker compose up -d --build --profile full
-```
-
-Or run without Docker:
-
-```bash
-cd server
-python -m venv venv
-source venv/bin/activate  # or venv\Scripts\activate on Windows
-pip install -r requirements.txt
-ENVIRONMENT=local python -m uvicorn src.app:app --host 0.0.0.0 --port 8080 --reload
-```
-
-### Step 6: Run Tests
-
-```bash
-cd server
-pip install -r requirements.txt
-pytest
-```
-
-Or with Docker:
-
-```bash
-docker compose run --rm app pytest
-```
-
-### Step 7: Deploy
-
-#### GCP Cloud Run (included)
-
-```bash
-cd infra/terraform
-terraform init -backend-config=backend-dev.hcl
-terraform plan -var-file=environment-dev.tfvars
-terraform apply -var-file=environment-dev.tfvars
-```
-
-GitHub Actions CI/CD is pre-configured:
-- **ci.yml** — Runs lint (ruff) + tests (pytest) on every push and PR
-- **deploy-cloudrun.yaml** — Builds and deploys to Cloud Run on push to `main`
+Every tool has a mirrored REST endpoint at `/api/v1/agent/*`. Both call the same service layer — pick whichever fits your caller.
 
 ---
 
-## Installing the Plugin
-
-The `plugin/` directory contains a Claude Code plugin for **end users** of your app (not for development — development skills live in `.claude/`).
-
-### For Development (Load Locally)
-
-While building your app, load the plugin for a single session:
-
-```bash
-claude --plugin-dir ./plugin
-```
-
-### For Distribution
-
-After your app is deployed, users install your plugin:
-
-```bash
-# Clone or download your published repo
-git clone https://github.com/your-org/your-app.git
-cd your-app
-
-# Add to local plugin marketplace and install
-claude plugin marketplace add ./plugin
-claude plugin install your-app
-```
-
-Or load without installing:
-
-```bash
-claude --plugin-dir /path/to/your-app/plugin
-```
-
-### Plugin Structure
+## How it works
 
 ```
-plugin/
-├── .claude-plugin/
-│   └── plugin.json       # Plugin manifest (name, version, author)
-├── .mcp.json              # MCP server connection config
-├── commands/
-│   └── help.md            # /help slash command
-├── skills/
-│   └── app/SKILL.md       # Main skill for tool interactions
-├── hooks/
-│   ├── hooks.json         # Hook definitions
-│   └── context.json       # Context injection on prompt submit
-└── README.md
+┌─────────────────────────────────────────────────────────────┐
+│  Your machine                                               │
+│                                                             │
+│  Claude Code ─MCP──┐                                        │
+│  Python/curl ─REST─┤                                        │
+│                    ▼                                        │
+│  ┌─ defi-agent (single FastAPI process, port 8080) ──┐     │
+│  │   • auth middleware (X-API-Key)                   │     │
+│  │   • service layer (one for REST + MCP)            │     │
+│  │   • APScheduler (in-process cron, SQLite jobstore)│     │
+│  │   • local Fernet-encrypted wallets                │     │
+│  └───────────────────────────────────────────────────┘     │
+│           │                        │                        │
+│           ▼                        ▼                        │
+│  ┌── SQLite: agent.db ─┐  ┌── OS Keychain (Fernet key) ─┐  │
+│  └─────────────────────┘  └──────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+              │                      │
+              ▼                      ▼
+       mangroveai SDK         mangrovemarkets SDK
+       (strategies, backtest, (DEX swap, portfolio,
+        signals, market,       wallet)
+        KB, on-chain)
 ```
 
-Customize by editing the files above. Add new slash commands as `.md` files in `commands/`. Update `skills/app/SKILL.md` with descriptions of your app's tools.
+Strategy evaluation happens inside `mangroveai.execution.evaluate()` — the agent does **not** re-implement signal logic, risk gates, position sizing, or cooldowns. It orchestrates: fetch strategy → call SDK → dispatch returned `OrderIntent[]` to the executor → log.
+
+For live trades the agent decrypts your wallet's secret in-process, signs the unsigned transaction returned by `mangrovemarkets`, broadcasts the signed bytes, and zeroes the secret. The SDK never sees your key.
 
 ---
 
-## Tutorial: Build a Trading App
+## Architecture docs
 
-App-in-a-box includes a hands-on tutorial that walks you through building a trading app against the Mangrove developer API.
+| Doc | What's in it |
+|---|---|
+| [docs/api-reference.md](docs/api-reference.md) | The Mangrove API surface we call |
+| [docs/user-stories.md](docs/user-stories.md) | 18 user stories + 4 flow diagrams |
+| [docs/specification.md](docs/specification.md) | API contracts, Pydantic models, SQLite schema, error codes |
+| [docs/architecture.md](docs/architecture.md) | System diagrams, sequence diagrams, file tree |
+| [docs/implementation-plan.md](docs/implementation-plan.md) | 24-task phased build plan |
 
-```bash
-claude
-> /tutorial
+## Development
+
+Design-first workflow powered by Claude Code skills — use these when you're building something new on top of the template, not when running defi-agent itself:
+
+```
+/onboard → /requirements → /specification → /architecture → /plan
 ```
 
-The tutorial covers 8 chapters:
+Each phase produces a doc in `docs/` and waits for your approval before proceeding. See [docs/](docs/) for the defi-agent outputs.
 
-| Chapter | Topic |
-|---------|-------|
-| 0 | Overview and setup |
-| 1 | Your first endpoint |
-| 2 | MCP tool registration |
-| 3 | Service layer pattern |
-| 4 | Authentication |
-| 5 | x402 payments |
-| 6 | Testing |
-| 7 | Docker and local development |
-| 8 | Deployment to Cloud Run |
-
-Reference docs are in `tutorials/trading-app/` if you prefer to read ahead.
-
----
-
-## Non-Interactive Setup
-
-If you prefer to skip the agent conversation and bootstrap manually:
+## Tests
 
 ```bash
-./init.sh --name my-service --gcp-project my-gcp-project --region us-central1
+docker run --rm -v "$(pwd)/server:/app" -w /app -e ENVIRONMENT=test \
+  $(docker compose build -q app && docker compose images -q app) \
+  pytest tests/
 ```
 
-This replaces placeholder values across all config files, updates `branding.json`, and self-deletes. You can then run the design lifecycle skills (`/requirements`, `/specification`, etc.) separately, or skip them entirely and start coding.
+Or from inside the running container:
 
----
+```bash
+docker compose exec app pytest tests/
+```
 
-## Re-skinning / Branding
+Expect: 239 passed, 2 skipped (opt-in live-swap tests).
 
-App-in-a-box is Mangrove-branded by default. To use your own brand:
+To run the opt-in live swaps:
 
-1. **Edit `branding.json`:**
-   ```json
-   {
-     "project_name": "my-project",
-     "display_name": "My Project",
-     "org_name": "My Org",
-     "tagline": "What my project does",
-     "urls": {
-       "homepage": "https://myproject.com",
-       "docs": "https://docs.myproject.com",
-       "repository": "https://github.com/my-org/my-project"
-     },
-     "colors": {
-       "primary": "#1a1a2e",
-       "secondary": "#16213e",
-       "accent": "#e94560"
-     },
-     "prefix": "my"
-   }
-   ```
+```bash
+# Testnet (Base Sepolia)
+ENABLE_SEPOLIA_TEST=1 BASE_SEPOLIA_PRIVATE_KEY=0x... pytest tests/e2e/test_live_swap.py::test_sepolia_live_swap
 
-2. **Replace files in `assets/`:**
-   - `logo.svg` — Light background logo
-   - `logo-dark.svg` — Dark background logo
-   - `icon.png` — Square icon (120x120 recommended)
-   - `banner.png` — Banner image for README/docs
+# Mainnet — real funds; we tested at 0.10 USDC
+ENABLE_MAINNET_TEST=1 BASE_MAINNET_PRIVATE_KEY=0x... pytest tests/e2e/test_live_swap.py::test_mainnet_live_swap
+```
 
-3. **Run `./init.sh`** or let the `/onboard` skill handle it during agent setup.
+## Deployment
 
----
+Local-only for v1 (Docker Compose). Cloud deployment (Cloud Run with persistent storage, Cloud SQL) is roadmap, not shipped.
 
-## FAQ
+## Project layout
 
-**Q: Do I need to use every phase of the design lifecycle?**
-No. You can skip straight to coding. The skills are there to help you think through your app before building — especially useful if you're not sure what you need yet.
-
-**Q: Can I use this without Claude Code?**
-Yes. The server is a standard FastAPI app. Run `./init.sh`, edit the code, and deploy normally. The Claude Code skills and plugin are optional.
-
-**Q: What gets removed during the architecture phase?**
-Depends on your app. If you don't need x402 payments, the payment middleware and x402 routes are removed. If you don't need PostgreSQL, the DB config and init scripts are removed. The agent explains what it's removing and why.
-
-**Q: Can I add removed modules back later?**
-Yes. The git history preserves everything. You can also re-clone the template and copy modules back in.
-
-**Q: How do I add a new endpoint?**
-See the "Adding Endpoints" section in [CLAUDE.md](CLAUDE.md). Short version: create a route, create a service, register both, write tests.
+```
+defi-agent/
+├── .claude/                  # Claude Code framework (skills, agents, rules)
+├── server/
+│   ├── src/
+│   │   ├── app.py            # FastAPI factory
+│   │   ├── config/           # Per-env JSON configs
+│   │   ├── api/routes/       # REST routes — one file per resource
+│   │   ├── mcp/              # MCP tool registration
+│   │   ├── models/           # Pydantic domain + DB models
+│   │   ├── services/         # Business logic (wallet, strategy, executor, scheduler, trade_log, …)
+│   │   └── shared/           # auth, db/sqlite.py, crypto/fernet.py, clients/mangrove.py, errors, logging
+│   └── tests/                # unit / integration / e2e
+├── docs/                     # Design docs (requirements, spec, architecture, plan)
+├── scripts/verify_quickstart.sh
+├── docker-compose.yml
+├── .mcp.json.example         # Drop-in Claude Code MCP config
+└── CLAUDE.md                 # Project context
+```
 
 ## License
 

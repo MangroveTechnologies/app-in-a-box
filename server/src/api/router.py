@@ -9,6 +9,10 @@ from fastapi import APIRouter
 from src.api.routes.dex import router as dex_router
 from src.api.routes.discovery import router as discovery_router
 from src.api.routes.hello_mangrove import router as hello_mangrove_router
+from src.api.routes.kb import router as kb_router
+from src.api.routes.market import router as market_router
+from src.api.routes.on_chain import router as on_chain_router
+from src.api.routes.signals import router as signals_router
 from src.api.routes.wallet import router as wallet_router
 
 # Free + auth-gated
@@ -19,6 +23,10 @@ agent_router = APIRouter(prefix="/agent")
 agent_router.include_router(discovery_router, tags=["discovery"])
 agent_router.include_router(wallet_router)
 agent_router.include_router(dex_router)
+agent_router.include_router(market_router)
+agent_router.include_router(on_chain_router)
+agent_router.include_router(signals_router)
+agent_router.include_router(kb_router)
 
 api_router.include_router(agent_router)
 

@@ -6,6 +6,7 @@
 """
 from fastapi import APIRouter
 
+from src.api.routes.dex import router as dex_router
 from src.api.routes.discovery import router as discovery_router
 from src.api.routes.hello_mangrove import router as hello_mangrove_router
 from src.api.routes.wallet import router as wallet_router
@@ -17,6 +18,7 @@ api_router = APIRouter(prefix="/api/v1")
 agent_router = APIRouter(prefix="/agent")
 agent_router.include_router(discovery_router, tags=["discovery"])
 agent_router.include_router(wallet_router)
+agent_router.include_router(dex_router)
 
 api_router.include_router(agent_router)
 

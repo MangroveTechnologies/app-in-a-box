@@ -40,8 +40,8 @@ async def main():
     from src.shared.x402.config import (
         get_cdp_api_key_id,
         get_cdp_api_key_secret,
-        get_hello_mangrove_price,
         get_facilitator_url,
+        get_hello_mangrove_price,
         get_network,
         get_pay_to,
     )

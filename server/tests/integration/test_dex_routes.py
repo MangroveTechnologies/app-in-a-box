@@ -23,18 +23,10 @@ def client(tmp_path, monkeypatch):
     db_mod.reset_connection()
     ss.reset_scheduler_cache()
 
-    from src.shared.db.sqlite import get_connection, init_db
+    from src.shared.db.sqlite import init_db
     init_db()
 
-    # Seed a placeholder strategy row for user-initiated trades (FK target).
-    get_connection().execute(
-        """INSERT INTO strategies (id, mangrove_id, name, asset, timeframe, status,
-           entry_json, exit_json, execution_config_json, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-        ("user-initiated", "mg-user", "user", "ETH", "1h", "paper",
-         "[]", "[]", "{}", "2026-04-20T00:00:00+00:00", "2026-04-20T00:00:00+00:00"),
-    )
-    get_connection().commit()
+    # 'user-initiated' placeholder seeded by migration 002.
 
     # Stub the markets SDK (used by routes AND order_executor).
     sdk = MagicMock()

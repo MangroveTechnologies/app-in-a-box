@@ -149,7 +149,14 @@ def _live_swap(
         )
 
     client = mangrovemarkets_client()
-    if intent.side == "buy":
+    # Prefer explicit addresses (user-initiated swaps via /dex/swap); fall
+    # back to USDC+symbol convention when the intent came from the cron
+    # strategy path.
+    if intent.input_token_address and intent.output_token_address:
+        input_token = intent.input_token_address
+        output_token = intent.output_token_address
+        input_amount = intent.amount
+    elif intent.side == "buy":
         input_token, output_token = "USDC", intent.symbol
         input_amount = intent.amount  # treat as USDC notional for now
     else:

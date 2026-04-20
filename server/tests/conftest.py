@@ -1,7 +1,11 @@
 """Test configuration and fixtures."""
 import os
 
-os.environ["ENVIRONMENT"] = "test"
+# Default to the 'test' env for unit/integration runs; live E2E tests
+# (tests/e2e/test_live_swap.py) override by setting ENVIRONMENT=local
+# before pytest starts so they pick up the real MANGROVE_API_KEY +
+# hosted MangroveMarkets URL from local-config.json.
+os.environ.setdefault("ENVIRONMENT", "test")
 
 import pytest
 from fastapi.testclient import TestClient

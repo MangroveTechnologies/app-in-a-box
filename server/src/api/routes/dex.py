@@ -117,6 +117,8 @@ async def dex_swap(req: SwapRequest) -> dict:
         symbol=symbol,
         amount=req.amount,
         reason="user-initiated",
+        input_token_address=req.input_token,
+        output_token_address=req.output_token,
     )
 
     trade = execute_one(

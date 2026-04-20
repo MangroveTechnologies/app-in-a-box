@@ -119,6 +119,9 @@ def test_create_wallet_evm_persists_encrypted(temp_db, stub_keyring, mock_sdk_cr
     assert response.address == _TEST_ADDRESS
     assert response.seed_phrase == _TEST_PRIVKEY
     assert "chat transcript" in response.warning  # security warning present
+    # Deposit instructions guide the user to fund the wallet with a small test amount first.
+    assert _TEST_ADDRESS in response.deposit_instructions
+    assert "small test amount" in response.deposit_instructions.lower()
 
     row = get_connection().execute(
         "SELECT address, chain, chain_id, label, encrypted_secret, encryption_method FROM wallets WHERE address=?",

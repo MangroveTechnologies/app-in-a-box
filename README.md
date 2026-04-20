@@ -95,6 +95,42 @@ cp .mcp.json.example ~/.claude/mcp/defi-agent.json
 
 Then open a Claude Code session — the agent's 22 tools show up automatically.
 
+### 6. Your first trade
+
+Open Claude Code and walk through the standard flow — every step is a natural-language request:
+
+1. **Ask the agent to create a wallet.** It generates a fresh EVM wallet, shows you the address and seed phrase (once), and prints deposit instructions.
+
+   > "Create a wallet on Base mainnet"
+
+   The agent recommends one wallet per project — no cross-contamination with your personal funds. Save the seed phrase offline immediately (paper, hardware wallet, password manager). After this response the seed phrase is encrypted to disk and never retrievable via the API.
+
+2. **Deposit a small test amount first.** Send 1–5 USDC (or equivalent) from your own wallet or exchange to the address the agent gave you. Do not skip this — confirm the transfer arrives before depositing anything larger.
+
+   > "Check my balance"
+
+3. **Create a strategy** — describe what you want in plain English.
+
+   > "Create an autonomous momentum strategy for ETH on a 1-hour timeframe"
+
+   The agent generates 5–10 candidates, runs quick backtests on each, filters by win-rate and trade-count, ranks by IRR, and runs a full backtest on the winner.
+
+4. **Backtest or re-test** with different parameters if you want.
+
+   > "Backtest that strategy over the last 6 months"
+
+5. **Activate it** — paper mode first, live when you trust the setup.
+
+   > "Activate the strategy in paper mode"
+
+   Paper simulates fills at market price; live executes real DEX swaps against the deposited funds. Moving to live requires an explicit confirm.
+
+6. **Monitor** — the agent logs every evaluation and every trade to local SQLite.
+
+   > "Show me my last 10 trades"
+
+**Why a fresh wallet per project?** Isolation. If a strategy misbehaves you only lose what's in the dedicated trading wallet, never your personal holdings. When you're done, swap the wallet back to USDC and leave it for the next experiment, or generate a new wallet.
+
 ---
 
 ## What the agent can do

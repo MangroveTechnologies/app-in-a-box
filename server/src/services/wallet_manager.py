@@ -52,6 +52,28 @@ SEED_PHRASE_WARNING = (
 )
 
 
+def _deposit_instructions(address: str, chain: str, network: str) -> str:
+    """Standard deposit guidance shown after wallet creation.
+
+    Every wallet the agent creates is a fresh, dedicated trading wallet —
+    no cross-contamination with the user's personal funds. The user deposits
+    into it from their own wallet/exchange to start trading.
+    """
+    net_label = "mainnet (real funds)" if network == "mainnet" else f"{network}"
+    chain_label = chain.upper() if chain == "evm" else chain
+    return (
+        f"To start trading, deposit funds to this {chain_label} address on {net_label}:\n"
+        f"  {address}\n\n"
+        "Recommended first step: send a SMALL TEST AMOUNT (e.g. 1-5 USDC or "
+        "equivalent) from your own wallet or exchange. Confirm it arrives via "
+        "`get_balances` before depositing more. This is a fresh dedicated "
+        "wallet — keep it separate from your personal holdings. When you're "
+        "done with this agent, swap back to your preferred token and leave "
+        "the funds here for the next experiment, or generate a new wallet "
+        "for each project."
+    )
+
+
 class WalletCreateResponse(BaseModel):
     """Response for POST /wallet/create. The seed phrase is returned ONCE."""
 
@@ -63,6 +85,7 @@ class WalletCreateResponse(BaseModel):
     created_at: datetime
     seed_phrase: str  # one-time, then encrypted to disk
     warning: str
+    deposit_instructions: str  # how to fund the wallet + first-test guidance
 
 
 class WalletListItem(BaseModel):
@@ -166,6 +189,7 @@ def create_wallet(
         created_at=created_at,
         seed_phrase=secret,
         warning=SEED_PHRASE_WARNING,
+        deposit_instructions=_deposit_instructions(address, chain_normalized, network),
     )
 
 

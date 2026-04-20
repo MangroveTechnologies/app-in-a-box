@@ -1,0 +1,329 @@
+"""order_executor — SINGLE swap path for cron-driven + user-initiated trades.
+
+Takes an OrderIntent and executes it:
+- Paper mode: fetch current market price via mangroveai.crypto_assets,
+  build a simulated Trade row with mode=paper, status=simulated,
+  tx_hash=None.
+- Live mode: full 6-step DEX swap via mangrovemarkets:
+    1. dex.get_quote
+    2. dex.approve_token (may return None if allowance already set)
+    3. If approval returned: wallet_manager.sign → dex.broadcast → poll tx_status
+    4. dex.prepare_swap
+    5. wallet_manager.sign → dex.broadcast
+    6. poll dex.tx_status until confirmed
+  Build a Trade row with mode=live, tx_hash, fill price from quote.
+
+Both paths end with trade_log.log_trade + optionally update_position.
+
+Callers:
+- strategy_service.tick (cron-driven): passes order_intents from
+  mangroveai.execution.evaluate() + the strategy's mode + wallet_address
+  from the allocation.
+- POST /dex/swap route (user-initiated): builds an OrderIntent from the
+  request body + hands to execute_one(mode='live').
+"""
+from __future__ import annotations
+
+import time
+import uuid
+from typing import Any, Literal
+
+from src.config import app_config
+from src.models.domain import OrderIntent, Trade
+from src.services import trade_log
+from src.services.wallet_manager import sign as wallet_sign
+from src.shared.clients.mangrove import mangroveai_client, mangrovemarkets_client
+from src.shared.errors import SdkError, SigningError
+from src.shared.logging import get_logger
+
+_log = get_logger(__name__)
+
+# How long to wait for a tx to move past "pending" when broadcasting a live swap.
+_TX_POLL_TIMEOUT_S = 60.0
+_TX_POLL_INTERVAL_S = 2.0
+
+
+def _fetch_mark_price(symbol: str) -> float:
+    """Pull a current mark price via crypto_assets.get_market_data()."""
+    resp = mangroveai_client().crypto_assets.get_market_data(symbol)
+    data = getattr(resp, "data", None) or {}
+    for key in ("current_price", "price", "usd_price"):
+        if key in data and data[key] is not None:
+            try:
+                return float(data[key])
+            except (TypeError, ValueError):
+                continue
+    raise SdkError(
+        f"No current price found in market data for {symbol}.",
+        suggestion="Check the symbol is recognized by mangroveai.crypto_assets.get_market_data().",
+    )
+
+
+def _paper_fill(intent: OrderIntent, strategy_id: str, evaluation_id: str | None) -> Trade:
+    """Simulate a paper fill at the current mark price."""
+    mark = _fetch_mark_price(intent.symbol)
+    # Convention: "buy" spends USDC for the asset; "sell" does the reverse.
+    # For paper we're not actually moving funds; we just record what the fill
+    # would have looked like.
+    if intent.side == "buy":
+        input_token, output_token = "USDC", intent.symbol
+        input_amount = intent.amount * mark
+        output_amount = intent.amount
+    else:
+        input_token, output_token = intent.symbol, "USDC"
+        input_amount = intent.amount
+        output_amount = intent.amount * mark
+
+    trade = Trade(
+        id=str(uuid.uuid4()),
+        strategy_id=strategy_id,
+        evaluation_id=evaluation_id,
+        order_intent=intent,
+        mode="paper",
+        tx_hash=None,
+        input_token=input_token,
+        input_amount=input_amount,
+        output_token=output_token,
+        output_amount=output_amount,
+        fill_price=mark,
+        fees={},
+        status="simulated",
+        executed_at=trade_log.now_utc(),
+    )
+    trade_log.log_trade(trade)
+    _log.info(
+        "order.paper.simulated",
+        trade_id=trade.id,
+        strategy_id=strategy_id,
+        symbol=intent.symbol,
+        side=intent.side,
+        amount=intent.amount,
+        fill_price=mark,
+    )
+    return trade
+
+
+def _poll_tx(tx_hash: str, chain_id: int, venue_id: str | None = None) -> dict[str, Any]:
+    """Poll dex.tx_status until it's out of 'pending' or timeout."""
+    client = mangrovemarkets_client()
+    deadline = time.monotonic() + _TX_POLL_TIMEOUT_S
+    last_status: Any = None
+    while time.monotonic() < deadline:
+        status = client.dex.tx_status(tx_hash=tx_hash, chain_id=chain_id, venue_id=venue_id)
+        last_status = status
+        s = (getattr(status, "status", "") or "").lower()
+        if s and s != "pending":
+            return {
+                "tx_hash": tx_hash,
+                "status": s,
+                "block_number": getattr(status, "block_number", None),
+                "error": getattr(status, "error_message", None),
+            }
+        time.sleep(_TX_POLL_INTERVAL_S)
+    return {
+        "tx_hash": tx_hash,
+        "status": (getattr(last_status, "status", "timeout") or "timeout"),
+        "block_number": None,
+        "error": "poll timeout",
+    }
+
+
+def _live_swap(
+    intent: OrderIntent,
+    strategy_id: str,
+    evaluation_id: str | None,
+    wallet_address: str,
+    chain_id: int | None = None,
+    venue_id: str | None = None,
+) -> Trade:
+    """Execute the full 6-step live swap flow.
+
+    The SDK never receives the private key — signing happens locally via
+    wallet_manager.sign(). The SDK sees unsigned tx payloads + signed tx
+    hex strings.
+    """
+    if chain_id is None:
+        raise SigningError(
+            "chain_id is required for live swaps.",
+            suggestion="Pass chain_id in the OrderIntent metadata or strategy config.",
+        )
+
+    client = mangrovemarkets_client()
+    if intent.side == "buy":
+        input_token, output_token = "USDC", intent.symbol
+        input_amount = intent.amount  # treat as USDC notional for now
+    else:
+        input_token, output_token = intent.symbol, "USDC"
+        input_amount = intent.amount
+
+    # 1. Quote
+    try:
+        quote = client.dex.get_quote(
+            input_token=input_token,
+            output_token=output_token,
+            amount=input_amount,
+            chain_id=chain_id,
+            venue_id=venue_id,
+        )
+    except Exception as e:  # noqa: BLE001
+        raise SdkError(f"dex.get_quote failed: {e}") from e
+
+    _log.info("order.executing", trade_symbol=intent.symbol, side=intent.side,
+              input_token=input_token, output_token=output_token,
+              input_amount=input_amount, quote_id=getattr(quote, "quote_id", None))
+
+    fees: dict[str, Any] = {
+        "venue_fee": getattr(quote, "venue_fee", 0.0),
+        "mangrove_fee": getattr(quote, "mangrove_fee", 0.0),
+        "price_impact_percent": getattr(quote, "price_impact_percent", 0.0),
+    }
+
+    # 2. Conditional token approval
+    approval_tx_hash: str | None = None
+    try:
+        approval_tx = client.dex.approve_token(
+            token_address=input_token,
+            chain_id=chain_id,
+            wallet_address=wallet_address,
+        )
+    except Exception as e:  # noqa: BLE001
+        raise SdkError(f"dex.approve_token failed: {e}") from e
+
+    if approval_tx is not None:
+        # 3. Sign + broadcast the approval
+        signed_approval = wallet_sign(getattr(approval_tx, "payload", {}), wallet_address)
+        _log.info("order.live.signed", kind="approval", wallet=wallet_address)
+        try:
+            broadcast_result = client.dex.broadcast(signed_tx=signed_approval, chain_id=chain_id, venue_id=venue_id)
+        except Exception as e:  # noqa: BLE001
+            raise SdkError(f"dex.broadcast(approval) failed: {e}") from e
+        approval_tx_hash = getattr(broadcast_result, "tx_hash", None)
+        _log.info("order.live.broadcast", kind="approval", tx_hash=approval_tx_hash)
+        if approval_tx_hash:
+            poll_result = _poll_tx(approval_tx_hash, chain_id, venue_id)
+            if poll_result["status"] not in ("confirmed", "success"):
+                raise SdkError(
+                    f"Approval tx did not confirm: {poll_result['status']} ({poll_result.get('error')})",
+                )
+
+    # 4. Prepare swap
+    try:
+        swap_tx = client.dex.prepare_swap(
+            quote_id=quote.quote_id,
+            wallet_address=wallet_address,
+        )
+    except Exception as e:  # noqa: BLE001
+        raise SdkError(f"dex.prepare_swap failed: {e}") from e
+
+    # 5. Sign + broadcast the swap
+    signed_swap = wallet_sign(getattr(swap_tx, "payload", {}), wallet_address)
+    _log.info("order.live.signed", kind="swap", wallet=wallet_address)
+    try:
+        broadcast_result = client.dex.broadcast(signed_tx=signed_swap, chain_id=chain_id, venue_id=venue_id)
+    except Exception as e:  # noqa: BLE001
+        raise SdkError(f"dex.broadcast(swap) failed: {e}") from e
+    tx_hash = getattr(broadcast_result, "tx_hash", None)
+    _log.info("order.live.broadcast", kind="swap", tx_hash=tx_hash)
+
+    # 6. Poll
+    final = _poll_tx(tx_hash, chain_id, venue_id) if tx_hash else {"status": "failed", "error": "no tx_hash"}
+    status_str = final["status"]
+    confirmed_at = trade_log.now_utc() if status_str in ("confirmed", "success") else None
+    trade_status = "confirmed" if status_str in ("confirmed", "success") else ("failed" if status_str == "failed" else "pending")
+    _log.info("order.live.confirmed", tx_hash=tx_hash, status=status_str,
+              block_number=final.get("block_number"))
+
+    trade = Trade(
+        id=str(uuid.uuid4()),
+        strategy_id=strategy_id,
+        evaluation_id=evaluation_id,
+        order_intent=intent,
+        mode="live",
+        tx_hash=tx_hash,
+        input_token=input_token,
+        input_amount=input_amount,
+        output_token=output_token,
+        output_amount=float(getattr(quote, "output_amount", 0.0)),
+        fill_price=float(getattr(quote, "exchange_rate", 0.0)),
+        fees={**fees, "approval_tx_hash": approval_tx_hash},
+        status=trade_status,
+        executed_at=trade_log.now_utc(),
+        confirmed_at=confirmed_at,
+    )
+    trade_log.log_trade(trade)
+    return trade
+
+
+def execute_one(
+    intent: OrderIntent,
+    mode: Literal["paper", "live"],
+    strategy_id: str = "user-initiated",
+    evaluation_id: str | None = None,
+    wallet_address: str | None = None,
+    chain_id: int | None = None,
+    venue_id: str | None = None,
+) -> Trade:
+    """Execute a single OrderIntent.
+
+    strategy_id defaults to "user-initiated" for /dex/swap-style callers;
+    cron-driven callers pass the real strategy UUID.
+    """
+    if mode == "paper":
+        return _paper_fill(intent, strategy_id=strategy_id, evaluation_id=evaluation_id)
+    if mode == "live":
+        if not wallet_address:
+            raise SigningError(
+                "wallet_address is required for live execution.",
+                suggestion="Pass a wallet_address from the strategy's active allocation, or from the /dex/swap request body.",
+            )
+        return _live_swap(
+            intent,
+            strategy_id=strategy_id,
+            evaluation_id=evaluation_id,
+            wallet_address=wallet_address,
+            chain_id=chain_id,
+            venue_id=venue_id,
+        )
+    raise SigningError(f"Unknown mode: {mode}")
+
+
+def execute_many(
+    intents: list[OrderIntent],
+    mode: Literal["paper", "live"],
+    strategy_id: str,
+    evaluation_id: str | None = None,
+    wallet_address: str | None = None,
+    chain_id: int | None = None,
+    venue_id: str | None = None,
+) -> list[Trade]:
+    """Execute N intents in order. Failures on one do not abort the batch.
+
+    Exceptions during a single intent's execution are logged as
+    order.errored and the batch continues; the returned list only contains
+    trades that were successfully logged to SQLite.
+    """
+    results: list[Trade] = []
+    _ = app_config  # config access forces validation at import time in some tests
+    for intent in intents:
+        try:
+            t = execute_one(
+                intent,
+                mode=mode,
+                strategy_id=strategy_id,
+                evaluation_id=evaluation_id,
+                wallet_address=wallet_address,
+                chain_id=chain_id,
+                venue_id=venue_id,
+            )
+            results.append(t)
+        except Exception as e:  # noqa: BLE001
+            _log.error(
+                "order.errored",
+                strategy_id=strategy_id,
+                symbol=intent.symbol,
+                side=intent.side,
+                exception=str(e),
+            )
+            # Intentional: don't re-raise. The caller (strategy_service.tick)
+            # logs the evaluation and moves on.
+    return results

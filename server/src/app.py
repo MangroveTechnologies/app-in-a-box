@@ -54,67 +54,86 @@ def _setup_x402():
 x402_handler = _setup_x402()
 
 
-@asynccontextmanager
-async def lifespan(application: FastAPI):
-    from src.mcp.server import create_mcp_server
-    from src.services.scheduler_service import shutdown as scheduler_shutdown
-    from src.services.scheduler_service import start as scheduler_start
-    from src.shared.db.sqlite import init_db
+from src.mcp.server import create_mcp_server, reset_mcp_server  # noqa: E402
 
-    init_db()  # emits db.migrated log event; idempotent
-    scheduler_start()  # emits scheduler.started; non-blocking BackgroundScheduler
+
+def create_app() -> FastAPI:
+    """Build a FastAPI app with REST routes + a fresh MCP server mounted at /mcp.
+
+    Each call returns a NEW app + a NEW MCP server. This matters for tests:
+    multiple TestClient lifespans must not share the same MCP session manager
+    (its task group is closed after the first lifespan exit).
+    """
+    reset_mcp_server()
     mcp_server = create_mcp_server()
-    application.mount("/mcp", mcp_server.streamable_http_app())
-    _log.info("app.startup", version=application.version, environment=str(app_config.ENVIRONMENT))
-    yield
-    scheduler_shutdown()  # wait=False so we don't block on in-flight ticks
-    _log.info("app.shutdown")
+    mcp_app = mcp_server.streamable_http_app()
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI):
+        from src.services.scheduler_service import shutdown as scheduler_shutdown
+        from src.services.scheduler_service import start as scheduler_start
+        from src.shared.db.sqlite import init_db
+
+        init_db()  # emits db.migrated log event; idempotent
+        scheduler_start()  # emits scheduler.started; non-blocking BackgroundScheduler
+        # FastMCP's session manager must be running for the /mcp endpoint to
+        # handle requests. Without this, calls into /mcp raise
+        # "RuntimeError: Task group is not initialized."
+        async with mcp_server.session_manager.run():
+            _log.info("app.startup", version=application.version, environment=str(app_config.ENVIRONMENT))
+            yield
+            _log.info("app.shutdown")
+        scheduler_shutdown()  # wait=False so we don't block on in-flight ticks
+
+    application = FastAPI(
+        title="App-in-a-Box",
+        description=(
+            "FastAPI + MCP service template with three-tier access control.\n\n"
+            "## For Agents\n\n"
+            "- **REST discovery**: GET `/openapi.json` for the full OpenAPI 3.0 spec\n"
+            "- **MCP tool catalog**: GET `/api/v1/docs/tools` for tool names, parameters, access tiers, and pricing\n"
+            "- **MCP endpoint**: Connect to `/mcp` via Streamable HTTP transport\n\n"
+            "## Access Tiers\n\n"
+            "| Tier | How to access |\n"
+            "|------|---------------|\n"
+            "| Free | No credentials needed |\n"
+            "| Auth | `X-API-Key` header |\n"
+            "| x402 | Payment via x402 protocol (or API key for free access) |\n"
+        ),
+        version="0.1.0",
+        lifespan=lifespan,
+        openapi_tags=[
+            {"name": "discovery", "description": "API and tool discovery endpoints (free, no auth)"},
+            {"name": "x402", "description": "x402 payment-gated endpoints (e.g. hello_mangrove)"},
+        ],
+    )
+
+    @application.middleware("http")
+    async def x402_middleware(request: Request, call_next):
+        api_key = request.headers.get("x-api-key")
+        if api_key:
+            return await call_next(request)
+        return await x402_handler(request, call_next)
+
+    application.add_exception_handler(AgentError, agent_error_handler)
+    application.add_middleware(CorrelationIdMiddleware)
+
+    application.include_router(api_router)
+    application.include_router(x402_router)
+    application.mount("/mcp", mcp_app)
+
+    @application.get(
+        "/health",
+        summary="Health check",
+        description="Returns service health status and timestamp. Free, no auth required.",
+        tags=["discovery"],
+    )
+    async def health():
+        return health_payload()
+
+    return application
 
 
-app = FastAPI(
-    title="App-in-a-Box",
-    description=(
-        "FastAPI + MCP service template with three-tier access control.\n\n"
-        "## For Agents\n\n"
-        "- **REST discovery**: GET `/openapi.json` for the full OpenAPI 3.0 spec\n"
-        "- **MCP tool catalog**: GET `/api/v1/docs/tools` for tool names, parameters, access tiers, and pricing\n"
-        "- **MCP endpoint**: Connect to `/mcp` via Streamable HTTP transport\n\n"
-        "## Access Tiers\n\n"
-        "| Tier | How to access |\n"
-        "|------|---------------|\n"
-        "| Free | No credentials needed |\n"
-        "| Auth | `X-API-Key` header |\n"
-        "| x402 | Payment via x402 protocol (or API key for free access) |\n"
-    ),
-    version="0.1.0",
-    lifespan=lifespan,
-    openapi_tags=[
-        {"name": "discovery", "description": "API and tool discovery endpoints (free, no auth)"},
-        {"name": "x402", "description": "x402 payment-gated endpoints (e.g. hello_mangrove)"},
-    ],
-)
-
-
-@app.middleware("http")
-async def x402_middleware(request: Request, call_next):
-    api_key = request.headers.get("x-api-key")
-    if api_key:
-        return await call_next(request)
-    return await x402_handler(request, call_next)
-
-
-app.add_exception_handler(AgentError, agent_error_handler)
-app.add_middleware(CorrelationIdMiddleware)
-
-app.include_router(api_router)
-app.include_router(x402_router)
-
-
-@app.get(
-    "/health",
-    summary="Health check",
-    description="Returns service health status and timestamp. Free, no auth required.",
-    tags=["discovery"],
-)
-async def health():
-    return health_payload()
+# Module-level app instance for uvicorn (`uvicorn src.app:app`).
+# Tests should call create_app() to get a fresh instance per test.
+app = create_app()

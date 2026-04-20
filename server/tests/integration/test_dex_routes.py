@@ -81,7 +81,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr("src.services.order_executor.wallet_sign",
                         lambda payload, wallet_address: "0xSIGNED")
 
-    from src.app import app
+    from src.app import create_app
+    app = create_app()
     with TestClient(app) as c:
         yield c
     ss.reset_scheduler_cache()

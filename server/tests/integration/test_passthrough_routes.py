@@ -68,7 +68,8 @@ def client(tmp_path, monkeypatch):
     ):
         monkeypatch.setattr(path, lambda s=sdk: s)
 
-    from src.app import app
+    from src.app import create_app
+    app = create_app()
     with TestClient(app) as c:
         yield c
     ss.reset_scheduler_cache()

@@ -64,7 +64,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr("src.services.wallet_manager.mangrovemarkets_client", lambda: sdk)
     monkeypatch.setattr("src.api.routes.wallet.mangrovemarkets_client", lambda: sdk)
 
-    from src.app import app
+    from src.app import create_app
+    app = create_app()
     with TestClient(app) as c:
         yield c
     ss.reset_scheduler_cache()

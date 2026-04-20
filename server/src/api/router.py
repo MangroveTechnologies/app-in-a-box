@@ -10,6 +10,7 @@ from src.api.routes.dex import router as dex_router
 from src.api.routes.discovery import router as discovery_router
 from src.api.routes.hello_mangrove import router as hello_mangrove_router
 from src.api.routes.kb import router as kb_router
+from src.api.routes.logs import router as logs_router
 from src.api.routes.market import router as market_router
 from src.api.routes.on_chain import router as on_chain_router
 from src.api.routes.signals import router as signals_router
@@ -28,6 +29,7 @@ agent_router.include_router(market_router)
 agent_router.include_router(on_chain_router)
 agent_router.include_router(signals_router)
 agent_router.include_router(strategies_router)
+agent_router.include_router(logs_router)
 agent_router.include_router(kb_router)
 
 api_router.include_router(agent_router)

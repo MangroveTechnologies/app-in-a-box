@@ -78,8 +78,10 @@ def client(tmp_path, monkeypatch):
 
     monkeypatch.setattr("src.api.routes.dex.mangrovemarkets_client", lambda: sdk)
     monkeypatch.setattr("src.services.order_executor.mangrovemarkets_client", lambda: sdk)
-    monkeypatch.setattr("src.services.order_executor.wallet_sign",
-                        lambda payload, wallet_address: "0xSIGNED")
+    monkeypatch.setattr(
+        "src.services.order_executor.wallet_sign",
+        lambda payload, wallet_address, chain_id=None: "0xSIGNED",
+    )
 
     from src.app import create_app
     app = create_app()

@@ -24,6 +24,7 @@ from typing import Any
 
 from eth_account import Account
 from eth_account.datastructures import SignedTransaction
+from eth_utils import to_checksum_address
 from pydantic import BaseModel
 
 from src.shared.clients.mangrove import mangrovemarkets_client
@@ -205,7 +206,65 @@ def _load_secret(address: str) -> str:
     return decrypt(row["encrypted_secret"]).decode()
 
 
-def sign(unsigned_tx: dict, wallet_address: str) -> str:
+# Fields that should be int when they're present. The mangrovemarkets SDK
+# returns them as strings (or `null` for missing EIP-1559 fields on legacy
+# txs); eth_account's TypedTransaction validator rejects strings and Nones.
+# Verified against the real Base mainnet swap (scripts/first_live_swap.py).
+_INT_FIELDS = {
+    "nonce", "gas", "gasLimit", "gasPrice",
+    "maxFeePerGas", "maxPriorityFeePerGas",
+    "value", "chainId", "type",
+}
+
+
+def _normalize_payload(payload: dict, chain_id: int | None = None) -> dict:
+    """Coerce an SDK payload into a dict eth_account will accept.
+
+    Observed SDK quirks (from real Base mainnet swap, April 2026):
+    - numeric fields arrive as strings: "0", "11000000"
+    - chainId is omitted entirely
+    - approve_token returns EIP-1559 fields (maxFeePerGas populated);
+      prepare_swap returns legacy (gasPrice populated, EIP-1559 nulls)
+
+    Normalization:
+    - drop keys whose value is None (so eth_account doesn't complain
+      about `maxFeePerGas=None` on a legacy tx)
+    - coerce known-numeric fields from str/hex to int
+    - checksum the `to` address
+    - inject chainId if missing and caller supplied one
+    - stamp tx type 2 (EIP-1559) when maxFee fields are populated,
+      else leave as legacy
+    """
+    out: dict = {}
+    for k, v in payload.items():
+        if v is None:
+            continue
+        if k in _INT_FIELDS and isinstance(v, str):
+            out[k] = int(v, 16) if v.startswith("0x") else int(v)
+        elif k == "to" and isinstance(v, str) and v.startswith("0x"):
+            out[k] = to_checksum_address(v)
+        else:
+            out[k] = v
+
+    if chain_id is not None and "chainId" not in out:
+        out["chainId"] = chain_id
+
+    has_eip1559 = (
+        out.get("maxFeePerGas") is not None
+        and out.get("maxPriorityFeePerGas") is not None
+    )
+    if has_eip1559:
+        out.setdefault("type", 2)
+        out.pop("gasPrice", None)
+    elif "gasPrice" in out:
+        out.pop("maxFeePerGas", None)
+        out.pop("maxPriorityFeePerGas", None)
+        out.pop("type", None)
+
+    return out
+
+
+def sign(unsigned_tx: dict, wallet_address: str, chain_id: int | None = None) -> str:
     """Sign an EVM transaction dict with the wallet's key.
 
     Returns the signed transaction as a hex string suitable for passing to
@@ -213,11 +272,16 @@ def sign(unsigned_tx: dict, wallet_address: str) -> str:
     sign, and then dropped.
 
     Args:
-        unsigned_tx: EVM tx dict (at minimum: nonce, chainId, to, value,
-                     data, gas, maxFeePerGas + maxPriorityFeePerGas
-                     OR gasPrice).
-        wallet_address: Address from Hank's local wallet store.
+        unsigned_tx: EVM tx dict from the SDK (may have SDK quirks: stringified
+                     numeric fields, missing chainId, nulls for the unused gas
+                     pricing fields). See _normalize_payload().
+        wallet_address: Address from the agent's local wallet store.
+        chain_id: Optional chainId to inject if the payload omits it. Strongly
+                  recommended — without it EIP-1559 signing defaults to
+                  chainId=0 and broadcast fails.
     """
+    normalized = _normalize_payload(unsigned_tx, chain_id=chain_id)
+
     secret = _load_secret(wallet_address)
     try:
         # Accept either a seed phrase (HD-derived) or a 0x-prefixed private key.
@@ -227,11 +291,11 @@ def sign(unsigned_tx: dict, wallet_address: str) -> str:
             Account.enable_unaudited_hdwallet_features()
             account = Account.from_mnemonic(secret)
 
-        signed: SignedTransaction = account.sign_transaction(unsigned_tx)
+        signed: SignedTransaction = account.sign_transaction(normalized)
     except Exception as e:  # noqa: BLE001
         raise SigningError(
             f"Failed to sign transaction for {wallet_address}: {e}",
-            suggestion="Verify the tx dict has all EVM required fields (nonce, chainId, to, value, data, gas, maxFeePerGas/maxPriorityFeePerGas).",
+            suggestion="Verify the tx dict has all EVM required fields. Pass chain_id explicitly if the SDK payload omits it.",
         ) from e
     finally:
         # Best-effort zeroing. Python strings are immutable so we can't truly
@@ -241,8 +305,9 @@ def sign(unsigned_tx: dict, wallet_address: str) -> str:
     _log.info(
         "wallet.signed_tx",
         wallet_address=wallet_address,
-        chain_id=unsigned_tx.get("chainId"),
-        to=unsigned_tx.get("to"),
+        chain_id=normalized.get("chainId"),
+        to=normalized.get("to"),
+        tx_type=normalized.get("type", 0),
     )
     raw = signed.rawTransaction if hasattr(signed, "rawTransaction") else signed.raw_transaction
     raw_hex = raw.hex()

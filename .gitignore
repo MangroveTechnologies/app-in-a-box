@@ -48,3 +48,4 @@ TEMPLATE-REVIEW.md
 ROADMAP.md
 docs/plans/
 agent.db
+server/scripts/first_live_swap.py

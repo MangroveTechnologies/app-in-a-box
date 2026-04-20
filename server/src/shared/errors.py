@@ -48,7 +48,16 @@ class AgentError(Exception):
         super().__init__(message)
         self.message = message
         self.suggestion = suggestion
-        self.correlation_id = correlation_id or str(uuid.uuid4())
+        # Inherit the request-scoped correlation_id bound by
+        # CorrelationIdMiddleware, so the error body and the
+        # X-Correlation-Id response header always agree. Fall back to
+        # a fresh UUID when raised outside any request (e.g. scheduler
+        # tick started from APScheduler — has its own id bound via
+        # with_correlation_id()).
+        if correlation_id is None:
+            from src.shared.logging import _correlation_id_var
+            correlation_id = _correlation_id_var.get() or str(uuid.uuid4())
+        self.correlation_id = correlation_id
 
     def to_dict(self) -> dict:
         return {

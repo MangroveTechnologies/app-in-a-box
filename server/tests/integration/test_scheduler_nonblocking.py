@@ -61,7 +61,8 @@ def tmp_db(tmp_path, monkeypatch):
 
 def test_in_flight_tick_does_not_block_requests(tmp_db):
     """HTTP /health stays fast while a 3-second tick is running."""
-    from src.app import app
+    from src.app import create_app
+    app = create_app()
     from src.services import scheduler_service as ss
 
     _SLOW_TICK_DONE.clear()

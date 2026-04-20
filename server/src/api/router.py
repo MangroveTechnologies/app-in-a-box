@@ -13,6 +13,7 @@ from src.api.routes.kb import router as kb_router
 from src.api.routes.market import router as market_router
 from src.api.routes.on_chain import router as on_chain_router
 from src.api.routes.signals import router as signals_router
+from src.api.routes.strategies import router as strategies_router
 from src.api.routes.wallet import router as wallet_router
 
 # Free + auth-gated
@@ -26,6 +27,7 @@ agent_router.include_router(dex_router)
 agent_router.include_router(market_router)
 agent_router.include_router(on_chain_router)
 agent_router.include_router(signals_router)
+agent_router.include_router(strategies_router)
 agent_router.include_router(kb_router)
 
 api_router.include_router(agent_router)

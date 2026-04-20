@@ -100,7 +100,10 @@ def configure(env: str) -> None:
         wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
         context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
-        cache_logger_on_first_use=True,
+        # cache_logger_on_first_use=False so tests can reconfigure structlog
+        # mid-process (e.g. to capture events into a buffer) without being
+        # blocked by already-cached wrappers bound to the prior config.
+        cache_logger_on_first_use=False,
     )
 
 

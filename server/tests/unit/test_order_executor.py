@@ -42,16 +42,8 @@ def temp_db(tmp_path, monkeypatch):
          "[]", "[]", "{}", None,
          "2026-04-20T00:00:00+00:00", "2026-04-20T00:00:00+00:00"),
     )
-    get_connection().execute(
-        """INSERT INTO strategies
-           (id, mangrove_id, name, asset, timeframe, status,
-            entry_json, exit_json, execution_config_json,
-            generation_report_json, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-        ("user-initiated", "mg-user", "user", "ETH", "1h", "paper",
-         "[]", "[]", "{}", None,
-         "2026-04-20T00:00:00+00:00", "2026-04-20T00:00:00+00:00"),
-    )
+    # 'user-initiated' placeholder is seeded by migration 002; no need to
+    # re-insert here.
     get_connection().commit()
     yield db_file
     db_mod.reset_connection()
@@ -106,8 +98,10 @@ def mock_markets(monkeypatch):
 @pytest.fixture
 def stub_sign(monkeypatch):
     """Stub wallet_manager.sign so live tests don't need a real wallet."""
-    monkeypatch.setattr("src.services.order_executor.wallet_sign",
-                        lambda payload, wallet_address: "0xSIGNED")
+    monkeypatch.setattr(
+        "src.services.order_executor.wallet_sign",
+        lambda payload, wallet_address, chain_id=None: "0xSIGNED",
+    )
 
 
 # -- Paper -----------------------------------------------------------------

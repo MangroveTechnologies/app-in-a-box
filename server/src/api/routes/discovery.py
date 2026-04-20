@@ -33,7 +33,10 @@ _STARTUP_MONOTONIC = time.monotonic()
 async def status() -> dict:
     conn = get_connection()
     wallets_count = conn.execute("SELECT COUNT(*) AS c FROM wallets").fetchone()["c"]
-    strategy_rows = conn.execute("SELECT status FROM strategies").fetchall()
+    # Exclude the 'user-initiated' placeholder (plumbing for /dex/swap FK).
+    strategy_rows = conn.execute(
+        "SELECT status FROM strategies WHERE id != 'user-initiated'",
+    ).fetchall()
     counts = Counter(r["status"] for r in strategy_rows)
     return {
         "version": "0.1.0",

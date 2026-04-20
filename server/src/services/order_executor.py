@@ -149,7 +149,14 @@ def _live_swap(
         )
 
     client = mangrovemarkets_client()
-    if intent.side == "buy":
+    # Prefer explicit addresses (user-initiated swaps via /dex/swap); fall
+    # back to USDC+symbol convention when the intent came from the cron
+    # strategy path.
+    if intent.input_token_address and intent.output_token_address:
+        input_token = intent.input_token_address
+        output_token = intent.output_token_address
+        input_amount = intent.amount
+    elif intent.side == "buy":
         input_token, output_token = "USDC", intent.symbol
         input_amount = intent.amount  # treat as USDC notional for now
     else:
@@ -191,7 +198,9 @@ def _live_swap(
 
     if approval_tx is not None:
         # 3. Sign + broadcast the approval
-        signed_approval = wallet_sign(getattr(approval_tx, "payload", {}), wallet_address)
+        signed_approval = wallet_sign(
+            getattr(approval_tx, "payload", {}), wallet_address, chain_id=chain_id,
+        )
         _log.info("order.live.signed", kind="approval", wallet=wallet_address)
         try:
             broadcast_result = client.dex.broadcast(signed_tx=signed_approval, chain_id=chain_id, venue_id=venue_id)
@@ -216,7 +225,7 @@ def _live_swap(
         raise SdkError(f"dex.prepare_swap failed: {e}") from e
 
     # 5. Sign + broadcast the swap
-    signed_swap = wallet_sign(getattr(swap_tx, "payload", {}), wallet_address)
+    signed_swap = wallet_sign(getattr(swap_tx, "payload", {}), wallet_address, chain_id=chain_id)
     _log.info("order.live.signed", kind="swap", wallet=wallet_address)
     try:
         broadcast_result = client.dex.broadcast(signed_tx=signed_swap, chain_id=chain_id, venue_id=venue_id)

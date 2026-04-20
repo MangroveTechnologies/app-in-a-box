@@ -231,3 +231,90 @@ def test_wallet_exists(temp_db, stub_keyring, mock_sdk_create):
     assert not wallet_exists(_TEST_ADDRESS)
     create_wallet(chain="evm", network="testnet", chain_id=84532)
     assert wallet_exists(_TEST_ADDRESS)
+
+
+# -- payload normalization (regression — caught by the real Base mainnet swap)
+
+
+def test_normalize_coerces_stringified_numerics():
+    from src.services.wallet_manager import _normalize_payload
+
+    sdk_payload = {
+        "to": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+        "data": "0x095ea7b3",
+        "value": "0",
+        "gas": 60000,
+        "nonce": 26,
+        "maxPriorityFeePerGas": "1000000",
+        "maxFeePerGas": "11000000",
+    }
+    out = _normalize_payload(sdk_payload, chain_id=8453)
+    assert out["value"] == 0
+    assert out["maxFeePerGas"] == 11_000_000
+    assert out["maxPriorityFeePerGas"] == 1_000_000
+    assert out["chainId"] == 8453  # injected
+    assert out["type"] == 2         # eip-1559
+    assert out["to"] == "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"  # checksum
+
+
+def test_normalize_drops_null_fields_for_legacy_tx():
+    """prepare_swap returns legacy (gasPrice populated, EIP-1559 nulls).
+    eth_account validator rejects `maxFeePerGas=None`, so we drop them."""
+    from src.services.wallet_manager import _normalize_payload
+
+    sdk_payload = {
+        "to": "0x111111125421ca6dc452d289314280a0f8842a65",
+        "data": "0xabcdef",
+        "value": "0",
+        "gas": 207909,
+        "nonce": 28,
+        "gasPrice": "7800000",
+        "maxFeePerGas": None,
+        "maxPriorityFeePerGas": None,
+    }
+    out = _normalize_payload(sdk_payload, chain_id=8453)
+    assert out["gasPrice"] == 7_800_000
+    assert "maxFeePerGas" not in out
+    assert "maxPriorityFeePerGas" not in out
+    assert "type" not in out  # legacy tx, no type marker
+
+
+def test_normalize_no_chain_id_injection_if_already_present():
+    from src.services.wallet_manager import _normalize_payload
+
+    out = _normalize_payload({"chainId": 1, "value": 0}, chain_id=8453)
+    assert out["chainId"] == 1  # caller's value wins
+
+
+def test_normalize_raises_nothing_when_chain_id_omitted():
+    """Caller may sign without chainId — eth_account handles that."""
+    from src.services.wallet_manager import _normalize_payload
+
+    out = _normalize_payload({"value": "0"})
+    assert out["value"] == 0
+    assert "chainId" not in out
+
+
+def test_sign_accepts_sdk_style_payload_with_chain_id(temp_db, stub_keyring, mock_sdk_create):
+    """End-to-end: wallet_manager.sign accepts a payload shaped exactly like
+    what mangrovemarkets SDK returns (stringified numerics, no chainId)."""
+    from src.services.wallet_manager import create_wallet, sign
+
+    create_wallet(chain="evm", network="testnet", chain_id=84532)
+
+    sdk_style_payload = {
+        "to": "0x" + "22" * 20,
+        "data": "0x",
+        "value": "0",
+        "gas": 21000,
+        "nonce": 0,
+        "maxPriorityFeePerGas": "1000000",
+        "maxFeePerGas": "11000000",
+        # Note: NO chainId. Agent must inject it.
+    }
+    raw = sign(sdk_style_payload, _TEST_ADDRESS, chain_id=84532)
+    assert raw.startswith("0x")
+    # Signed tx must encode chainId=84532 (0x14a34). After tx type byte (02)
+    # and RLP list prefix, the first list element is chainId. Quick sanity:
+    # not the chainId=0 signature bug we hit on the real swap.
+    assert "021482" not in raw[:20]  # would be chainId=0 (01 48 = type+empty)

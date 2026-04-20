@@ -24,6 +24,11 @@ class OrderIntent(BaseModel):
 
     No side effects. Input to order_executor which turns it into either a
     live DEX swap or a simulated paper fill.
+
+    Token addresses are optional. When populated (user-initiated swaps via
+    /dex/swap), the executor uses them verbatim. When absent (cron-driven
+    strategies against a USDC-quoted asset), the executor falls back to
+    {USDC, symbol} convention for the live DEX call.
     """
 
     action: Literal["enter", "exit"]
@@ -33,6 +38,9 @@ class OrderIntent(BaseModel):
     reason: str = ""  # which signal fired, or "user-initiated" for /dex/swap
     stop_loss: float | None = None
     take_profit: float | None = None
+    # Explicit chain-level addresses for live execution. Both or neither.
+    input_token_address: str | None = None
+    output_token_address: str | None = None
 
 
 class Evaluation(BaseModel):

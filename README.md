@@ -50,86 +50,82 @@ cd defi-agent
 
 ### 2. Configure
 
+Copy the example config. This file is gitignored — edit it freely.
+
 ```bash
 cp server/src/config/local-example-config.json server/src/config/local-config.json
 $EDITOR server/src/config/local-config.json
 ```
 
-You need to change one value:
+Two values to set:
 
-```json
-"MANGROVE_API_KEY": "dev_..."
-```
+| Key | Why | What to put |
+|-----|-----|-------------|
+| `MANGROVE_API_KEY` | Authenticates you to the MangroveAI backend (strategies, signals, backtests, on-chain data). Free key at https://mangrovedeveloper.ai. | Your `dev_...` or `prod_...` key |
+| `MANGROVEMARKETS_BASE_URL` | Where the agent sends DEX calls (quotes, swaps, wallet ops). Defaults to localhost, which assumes you're running your own MangroveMarkets server. Most people want the hosted one. | `https://mangrovemarkets-pcqgpciucq-uc.a.run.app` |
 
-All other defaults are sensible. For a hosted MangroveMarkets MCP server (skip running one yourself), also set:
-
-```json
-"MANGROVEMARKETS_BASE_URL": "https://mangrovemarkets-pcqgpciucq-uc.a.run.app"
-```
+Every other value in the file has a sensible default.
 
 ### 3. Run
 
+The agent stores its state in a local SQLite file `./agent.db`. Docker bind-mounts it so restarts preserve history. On macOS, Docker creates missing mount targets as directories (which breaks SQLite), so we pre-create the file:
+
 ```bash
-touch agent.db                     # Docker Desktop on macOS needs this so the bind mount is a file, not a dir
+touch agent.db
 docker compose up -d --build
 ```
 
-First build takes a minute. Subsequent runs start in seconds.
+First build takes ~60s. After that, startup is a few seconds.
 
 ### 4. Verify
+
+One script that proves everything's wired up — checks Docker, config, `/health`, the tool catalog, and startup log events:
 
 ```bash
 ./scripts/verify_quickstart.sh
 ```
 
-This script checks the health endpoint, authenticates, lists the MCP tools, and confirms the agent is ready. Exits 0 on success (target runtime: under 300 seconds from a cold clone).
+Exits 0 on success. Typical runtime: under 10 seconds once the image is built.
 
 ### 5. Connect Claude Code
 
-Copy the MCP config and point Claude at the agent:
+Point Claude Code at the running agent by dropping the MCP config into a project's `.mcp.json` (or `~/.claude/mcp/defi-agent.json` for a global entry):
 
 ```bash
-cp .mcp.json.example ~/.claude/mcp/defi-agent.json
-# Or add to a project's .mcp.json
+cp .mcp.json.example ./.mcp.json
 ```
 
-Then open a Claude Code session — the agent's 22 tools show up automatically.
+Then start a Claude Code session in that directory. All 22 agent tools appear automatically.
 
 ### 6. Your first trade
 
-Open Claude Code and walk through the standard flow — every step is a natural-language request:
+Everything below is a natural-language prompt to Claude Code. The agent handles the tool calls.
 
-1. **Ask the agent to create a wallet.** It generates a fresh EVM wallet, shows you the address and seed phrase (once), and prints deposit instructions.
-
+1. **Create a dedicated trading wallet.**
    > "Create a wallet on Base mainnet"
 
-   The agent recommends one wallet per project — no cross-contamination with your personal funds. Save the seed phrase offline immediately (paper, hardware wallet, password manager). After this response the seed phrase is encrypted to disk and never retrievable via the API.
+   The agent generates a fresh EVM wallet, shows the address + seed phrase **once**, then encrypts the secret to disk. Save the seed phrase offline (paper, hardware wallet, password manager) — it's not retrievable after.
 
-2. **Deposit a small test amount first.** Send 1–5 USDC (or equivalent) from your own wallet or exchange to the address the agent gave you. Do not skip this — confirm the transfer arrives before depositing anything larger.
+   Use a fresh wallet per project so a misbehaving strategy can only spend what you've deposited into it, never your personal holdings.
 
+2. **Deposit a small test amount.** Send 1–5 USDC from your own wallet or exchange to the address the agent gave you. Confirm it arrived before depositing more.
    > "Check my balance"
 
-3. **Create a strategy** — describe what you want in plain English.
-
+3. **Create a strategy from a plain-English goal.**
    > "Create an autonomous momentum strategy for ETH on a 1-hour timeframe"
 
-   The agent generates 5–10 candidates, runs quick backtests on each, filters by win-rate and trade-count, ranks by IRR, and runs a full backtest on the winner.
+   The agent picks 5–10 candidate signal combinations, quick-backtests each, filters by win-rate and trade-count, ranks by IRR, and deep-backtests the winner. You get the final metrics back.
 
-4. **Backtest or re-test** with different parameters if you want.
-
+4. **Run more backtests if you want.**
    > "Backtest that strategy over the last 6 months"
 
-5. **Activate it** — paper mode first, live when you trust the setup.
-
+5. **Activate — paper first, live when you trust it.**
    > "Activate the strategy in paper mode"
 
-   Paper simulates fills at market price; live executes real DEX swaps against the deposited funds. Moving to live requires an explicit confirm.
+   Paper simulates fills at the current market price. Live executes real DEX swaps and requires explicit confirmation + an allocation amount.
 
-6. **Monitor** — the agent logs every evaluation and every trade to local SQLite.
-
+6. **Monitor.** Every tick and every trade is logged to the local DB.
    > "Show me my last 10 trades"
-
-**Why a fresh wallet per project?** Isolation. If a strategy misbehaves you only lose what's in the dedicated trading wallet, never your personal holdings. When you're done, swap the wallet back to USDC and leave it for the next experiment, or generate a new wallet.
 
 ---
 

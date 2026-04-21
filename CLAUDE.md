@@ -131,6 +131,10 @@ Secrets use `secret:name:property` syntax for GCP Secret Manager.
 
 Read `.claude/rules/git-workflow.md`. Never commit to main. Feature branches + PRs only.
 
+## Wallet Presentation
+
+Read `.claude/rules/wallet-presentation.md`. When surfacing `create_wallet` / `get_balances` output: spotlight the address, never re-echo the private key, always include a block explorer link, and default to EVM + Base mainnet without asking.
+
 ## Branding
 
 Edit `branding.json` and update `assets/` to re-skin. Run `init.sh` to propagate changes.

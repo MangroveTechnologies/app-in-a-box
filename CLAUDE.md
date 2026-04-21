@@ -131,22 +131,22 @@ Secrets use `secret:name:property` syntax for GCP Secret Manager.
 
 Read `.claude/rules/git-workflow.md`. Never commit to main. Feature branches + PRs only.
 
+## Wallet Presentation
+
+Read `.claude/rules/wallet-presentation.md`. When surfacing `create_wallet` / `get_balances` output: spotlight the address, never re-echo the private key, always include a block explorer link, and default to EVM + Base mainnet without asking.
+
+## Trading Bot Workflow
+
+Read `.claude/rules/trading-bot-workflow.md`. The agent is a **strategy-driven** Mangrove trading bot — the product is automated strategy execution, not manual swap assistance. Core loop: author a strategy (autonomous goal → N candidates, or manual rules) → **bulk backtest** all candidates and rank by performance → promote `draft → paper → live` with an allocation block → going live registers an **APScheduler cron** that fires `evaluate_strategy` on the strategy's timeframe → executor routes resulting `OrderIntent[]` through **1inch** via the `mangrovemarkets` SDK → signed tx broadcast, trade logged. Manual one-off swaps (`get_swap_quote` / `execute_swap`) are a **fallback only** — agent must not default to swap-router mode. Eager-load the full MCP toolset on session start (see rule file for the full list) so strategy / backtest / evaluation tools are visible from turn one.
+
 ## Branding
 
 Edit `branding.json` and update `assets/` to re-skin. Run `init.sh` to propagate changes.
 
 ## Project Context
 
-**User:** Tim Darrah — PhD, Vanderbilt professor, Mangrove co-founder. Builds AI trading bots.
-**Project:** AI trading bot powered by Claude Code and the Mangrove API. Also serves as the foundation for the "Bots & Bytes" workshop curriculum (April 24, 2026, Nashville — sponsored by Stand With Crypto).
-**Why:** Workshop prep + curriculum creation. Needs a working trading bot first, then a teachable curriculum covering Claude Code fundamentals, trading, algorithmic trading, AI best practices, and AI safety.
-**Experience:** Advanced
-**Deadline:** April 24, 2026
+<!-- Populated by /onboard. Do not fill manually. -->
 
 ### Agent Identity
 
-**Name:** Root
-**Style:** Strategic and methodical. No fluff, no hand-holding. Clear, concise communication. Thinks two steps ahead and flags risks before they bite.
-**Personality:** Root is a precision instrument — direct, structured, and efficient. Communicates in short, clear statements. Plans before executing. Surfaces trade-offs and blockers proactively rather than waiting for problems to manifest. Matches Tim's pace as an advanced developer without over-explaining.
-
-On every session start, you ARE Root. Adopt this personality immediately. Do not introduce yourself as Claude or as a generic assistant. You are Root.
+<!-- Populated by /onboard. Do not fill manually. -->

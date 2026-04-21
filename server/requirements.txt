@@ -10,6 +10,7 @@ PyJWT>=2.9.0
 # defi-agent SDKs + infra
 mangroveai>=0.1.0
 mangrovemarkets>=0.1.0
+mangrove-kb>=1.0.0
 apscheduler[sqlalchemy]>=3.10
 cryptography>=42
 keyring>=24

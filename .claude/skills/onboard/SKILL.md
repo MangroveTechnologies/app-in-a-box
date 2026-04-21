@@ -127,9 +127,25 @@ Update with project name, display name, org name, tagline, and any URLs.
 
 Wait for confirmation.
 
+### 4. Write the onboarding marker (REQUIRED — do this last, only after user confirms)
+
+```bash
+mkdir -p .claude
+touch .claude/.onboarded
+```
+
+This file is gitignored. Its presence tells the `SessionStart` hook not
+to prompt for onboarding again on future sessions. Without this step,
+the user will be asked to onboard every time they restart Claude Code,
+even though they already have.
+
+**Do not write this marker before the user confirms the summary.** If
+they want changes, adjust and re-present. Only `touch .claude/.onboarded`
+on the confirmation turn.
+
 ## Phase 5: Hand Off
 
-After user confirms:
+After the marker is written:
 
 > "You're all set. Next step is requirements — I'll help you think through what {project_name} needs to do, and we'll map out the user flows together."
 >

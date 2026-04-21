@@ -37,6 +37,8 @@ When `create_wallet` returns, the response contains a `seed_phrase` (private key
   - (extend as chains are added)
 - **Always** include deposit instructions: small test amount first, verify via `get_balances` before sending more.
 - **Always** remind the user the private key was shown in the raw tool response and is now encrypted on disk — tell them to back it up from that response before moving on.
+- **Always** persist wallet metadata (address, chain, network, chain_id, label, created_at — **NOT the key**) to `server/src/config/<env>-config.json` under a `WALLETS` array. This is the durable record that survives container rebuilds (agent.db + encryption master key may not).
+- Note: `local-config.json` is gitignored and safe for per-user state. The template `local-example-config.json` IS checked in and must only contain `"WALLETS": []` (empty). Never write private-key material to any config file under any circumstance.
 
 ### Template
 

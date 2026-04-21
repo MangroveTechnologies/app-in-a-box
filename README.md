@@ -66,7 +66,19 @@ Two values to set:
 
 Every other value in the file has a sensible default.
 
-### 3. Run
+### 3. Persist the encryption master key
+
+The agent encrypts every wallet's private key with a Fernet master key. By default that key lives in your OS keychain (macOS Keychain / Linux Secret Service / Windows Credential Manager), but **those backends aren't reachable from inside a Docker container** — so without this step each container process generates a fresh in-memory key that dies on restart, stranding any wallets encrypted with it.
+
+Run this once; it's idempotent:
+
+```bash
+./scripts/init-master-key.sh
+```
+
+The script generates a Fernet key and writes it to `MASTER_KEY_ENV_FALLBACK` in your gitignored `local-config.json`. Container reads it on startup, wallet secrets survive restarts.
+
+### 4. Run
 
 The agent stores its state in a local SQLite file `./agent.db`. Docker bind-mounts it so restarts preserve history. On macOS, Docker creates missing mount targets as directories (which breaks SQLite), so we pre-create the file:
 
@@ -77,7 +89,7 @@ docker compose up -d --build
 
 First build takes ~60s. After that, startup is a few seconds.
 
-### 4. Verify
+### 5. Verify
 
 One script that proves everything's wired up — checks Docker, config, `/health`, the tool catalog, and startup log events:
 
@@ -87,7 +99,7 @@ One script that proves everything's wired up — checks Docker, config, `/health
 
 Exits 0 on success. Typical runtime: under 10 seconds once the image is built.
 
-### 5. Connect Claude Code
+### 6. Connect Claude Code
 
 Register the MCP server with Claude Code. One command — it reads your API key from `local-config.json`, checks the container is healthy, and writes a user-scope registration so Claude Code loads the tools on next start.
 
@@ -99,7 +111,7 @@ Then start (or restart) a Claude Code session in that directory. All 22 agent to
 
 > **Why a script and not `.mcp.json`?** Claude Code's project-scope `.mcp.json` approval prompt is currently unreliable ([#9189](https://github.com/anthropics/claude-code/issues/9189)) — the "enable this MCP server?" prompt often doesn't persist across restarts. Registering via `claude mcp add` writes user-scope config keyed to this project directory and is honored reliably. `.mcp.json.example` is kept in the repo for reference; once the upstream bug is fixed, the cp-based flow will work too.
 
-### 6. Your first trade
+### 7. Your first trade
 
 Everything below is a natural-language prompt to Claude Code. The agent handles the tool calls.
 

@@ -2,6 +2,37 @@
 
 The agent is a **Mangrove-powered trading bot**, not a swap router. End users come to it for signal-driven recommendations, not to manually specify token pairs.
 
+## Tool Loading — Do This First
+
+MCP tools on this server are deferred — their schemas must be loaded via `ToolSearch` before they can be called. On any trading-bot session, **eagerly load the full core toolset on first action, do not lazy-load mid-conversation.**
+
+Required core set (load all together in one ToolSearch `select:` call):
+
+- `mcp__defi-agent__status`
+- `mcp__defi-agent__list_tools`
+- `mcp__defi-agent__list_signals`
+- `mcp__defi-agent__list_wallets`
+- `mcp__defi-agent__create_wallet`
+- `mcp__defi-agent__get_balances`
+- `mcp__defi-agent__list_dex_venues`
+- `mcp__defi-agent__get_swap_quote`
+- `mcp__defi-agent__execute_swap`
+- `mcp__defi-agent__get_ohlcv`
+- `mcp__defi-agent__get_market_data`
+- `mcp__defi-agent__kb_search`
+- `mcp__defi-agent__list_strategies`
+- `mcp__defi-agent__get_strategy`
+- `mcp__defi-agent__create_strategy_autonomous`
+- `mcp__defi-agent__create_strategy_manual`
+- `mcp__defi-agent__evaluate_strategy`
+- `mcp__defi-agent__backtest_strategy`
+- `mcp__defi-agent__update_strategy_status`
+- `mcp__defi-agent__list_trades`
+- `mcp__defi-agent__list_all_trades`
+- `mcp__defi-agent__list_evaluations`
+
+Lazy-loading just the "obvious" subset (wallet + swap) causes the agent to forget it has strategy / backtest / evaluation capabilities and to fall back to pure swap-router behavior. The whole trading-bot thesis depends on those tools being visible from the start.
+
 ## Operating Principles
 
 1. **The bot proposes; the user confirms.** Never ask the user to pick a token pair cold. Use Mangrove signals + market data + KB to generate candidates first.

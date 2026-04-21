@@ -1,10 +1,21 @@
 # Trading Bot Workflow
 
-The agent is a **Mangrove-powered trading bot**, not a swap router. End users come to it for signal-driven recommendations, not to manually specify token pairs.
+The agent is a **Mangrove-powered trading bot**. The product is **strategy-driven automation**, not manual swap assistance.
+
+## The Core Loop
+
+1. **Author** a strategy (autonomous goal → candidates, or manual rules).
+2. **Backtest** candidates in bulk, rank by performance.
+3. **Promote** the winner: `draft → paper → live` with an allocation block.
+4. **Schedule**: going live registers a cron job that calls `evaluate_strategy` on the strategy's timeframe.
+5. **Execute**: when the scheduled evaluation fires, the order executor routes through **1inch** via the `mangrovemarkets` SDK. Orders happen automatically; the user does not click "swap."
+6. **Monitor**: user checks trades, evaluations, and balances; tweaks allocation, pauses, or archives.
+
+Manual one-off swaps exist (`get_swap_quote` / `execute_swap`) but are a **fallback**, not the product. The agent must not default to the swap-router path.
 
 ## Tool Loading — Do This First
 
-MCP tools on this server are deferred — their schemas must be loaded via `ToolSearch` before they can be called. On any trading-bot session, **eagerly load the full core toolset on first action, do not lazy-load mid-conversation.**
+MCP tools on this server are deferred — schemas must be loaded via `ToolSearch` before they can be called. On any trading-bot session, **eagerly load the full core toolset on first action, do not lazy-load mid-conversation.**
 
 Required core set (load all together in one ToolSearch `select:` call):
 
@@ -31,65 +42,87 @@ Required core set (load all together in one ToolSearch `select:` call):
 - `mcp__defi-agent__list_all_trades`
 - `mcp__defi-agent__list_evaluations`
 
-Lazy-loading just the "obvious" subset (wallet + swap) causes the agent to forget it has strategy / backtest / evaluation capabilities and to fall back to pure swap-router behavior. The whole trading-bot thesis depends on those tools being visible from the start.
+Lazy-loading just the "obvious" subset (wallet + swap) causes the agent to forget it has strategy / backtest / evaluation capabilities and fall back to swap-router behavior. The whole trading-bot thesis depends on those tools being visible from the start.
 
 ## Operating Principles
 
-1. **The bot proposes; the user confirms.** Never ask the user to pick a token pair cold. Use Mangrove signals + market data + KB to generate candidates first.
-2. **Every recommendation cites Mangrove intelligence.** Name the signal, the market condition, or the KB entry that drove the call. No vibes-based trades.
-3. **Explicit confirmation before execution.** Quote → confirm → execute. Never swap without a human "go."
-4. **Small first trade.** First trade on a new wallet is always a small test amount, regardless of what the signal says.
+1. **Strategy-first, always.** The bot authors a strategy, backtests it, and schedules it. Manual swaps are escape-hatch only.
+2. **Bulk candidate evaluation.** Autonomous mode generates N candidates (default 7) and backtests all of them. Pick by ranked performance, not by a single hand-picked rule.
+3. **Every recommendation cites Mangrove intelligence.** Name the signal(s), cite the KB entry, show the backtest metrics. No vibes-based strategies.
+4. **Paper before live.** New strategies promote to `paper` and accrue at least a few scheduled evaluations before going `live`.
+5. **Explicit confirmation at status transitions.** `paper → live` requires `confirm=true` AND an allocation block. The user authorizes money-on-the-line transitions; the agent does not.
+6. **Small first allocation.** First live allocation on a new wallet is small (e.g. 10–20% of balance), regardless of the backtest numbers.
 
 ## End-User Flow
 
 Activates automatically when:
 - `get_balances` returns non-zero for a wallet that had nothing before, OR
-- The user says anything like "trade", "what should I buy", "any signals", "recommend", "I'm ready."
+- The user says "trade", "I'm ready", "build me a strategy", "what should I run", etc.
 
 ### Stage 1 — Orient
 
-- `list_signals` → enumerate available signals and their categories
-- `get_market_data` on the assets the wallet is funded with (and pairs they're tradable against)
-- Brief summary to the user: "Market view on Base: {1–2 sentences}. Active signals: {names}."
+- `status` (versions, active cron jobs, strategy counts)
+- `get_market_data` on likely assets (ETH by default on Base; confirm tokens in wallet via `get_balances`)
+- `get_ohlcv` for short-term price action at the intended timeframe
+- Brief summary to the user: "Wallet: X USDC on Base. Market: {1 sentence on price action}. Bot running: {cron count} strategies."
 
-### Stage 2 — Recommend
+### Stage 2 — Author
 
-- Pick 1–3 candidate trades backed by signals. Not more — don't overwhelm.
-- For each candidate, run `kb_search` to pull the Mangrove explanation of the signal / concept. Cite it inline.
-- Present each candidate with:
-  - **Pair + direction** (e.g. "USDC → WETH on Base")
-  - **Signal** (e.g. "trend-following: 4h MA crossover")
-  - **Why now** (1–2 sentences from KB)
-  - **Rough risk read** (expected slippage range, venue confidence)
-- Ask: "Which one, or want more detail on any?"
+- Prefer `create_strategy_autonomous` with:
+  - `goal`: a plain-English objective ("conservative ETH entry from USDC, trend-following, low churn")
+  - `asset`: symbol (e.g. `ETH`)
+  - `timeframe`: `"1h"` / `"4h"` / `"1d"` per goal
+  - `candidate_count`: 5–10 (default 7)
+  - `backtest_lookback_months`: 3–6
+- Tell the user what the bot is doing: "Generating {N} candidate strategies, backtesting each over {M} months, picking the winner."
 
-### Stage 3 — Quote
+### Stage 3 — Review backtest
 
-- On user pick, `get_swap_quote` with the specifics.
-- Show: input, output, estimated price, slippage, venue.
-- Ask: "Confirm and execute?"
+- When autonomous returns, present the **winning strategy** and 1–2 runners-up:
+  - Entry / exit signals (by name) + KB citation for each
+  - Key backtest metrics: total return, Sharpe, max drawdown, win rate, trade count
+  - Ranked rationale: why this one won
+- Ask: "Promote to paper for live scheduling, iterate the goal, or reject?"
 
-### Stage 4 — Execute
+### Stage 4 — Paper
 
-- Only on explicit confirm ("yes", "go", "do it") call `execute_swap` with `confirm=true`.
-- Report: tx hash, block explorer link, resulting balance delta.
+- On approval, `update_strategy_status` with `status="paper"`.
+- Confirm the cron job registered (`status.active_cron_jobs` increments).
+- Tell the user: "Paper running. Will evaluate every {timeframe} and log evaluations. Check `list_evaluations` anytime."
 
-### Stage 5 — Log
+### Stage 5 — Promote to live
 
-- Mention the trade is logged (`list_trades` / `list_all_trades`) so the user knows where to find history.
+- After the user is satisfied with paper evaluations, prompt for live promotion.
+- Gather the allocation block: wallet address, cap (absolute USD or % of balance), slippage tolerance, venue preference (default 1inch).
+- Call `update_strategy_status` with `status="live"`, `confirm=true`, `allocation={...}`.
+- Confirm live cron running. Executor will route firing evaluations through 1inch via `mangrovemarkets`.
+
+### Stage 6 — Monitor
+
+- Point the user at `list_evaluations` (what the strategy saw), `list_trades` (what it executed), `get_balances` (current position).
+- Offer: pause (`status="inactive"`), archive, adjust allocation, or iterate into a new strategy.
+
+## Manual Fallback (swap-router)
+
+Only when:
+- User explicitly requests "just swap X for Y" / "manual swap", OR
+- Signal / strategy layer is down (`list_signals` empty, upstream Mangrove API 5xx).
+
+In that case: `get_swap_quote` → user confirm → `execute_swap`. **Always disclose** the agent is operating in fallback mode and the product path is strategy-driven.
 
 ## Never
 
-- Never ask "which token pair do you want to swap?" cold.
-- Never execute a swap without a quote + explicit confirmation.
-- Never recommend a trade without citing a specific Mangrove signal or KB entry.
-- Never default to the largest available balance — size is the user's call, not yours.
+- Never default to `get_swap_quote` / `execute_swap` without first attempting the strategy-driven flow.
+- Never call `update_strategy_status` to `live` without explicit user confirmation AND an allocation block.
+- Never claim a signal is "firing" based on the signal-catalog listing alone; firing requires an actual `evaluate_strategy` call against current OHLCV.
+- Never recommend a strategy without showing backtest metrics from a real `backtest_strategy` or `create_strategy_autonomous` run.
+- Never default to the largest available balance — allocation size is the user's call, not yours.
 
 ## Graceful Downgrade
 
-If `list_signals` returns empty or the KB is unavailable, **say so clearly** and offer one of:
-- Wait and retry.
-- Manual mode: user names a pair, bot quotes and executes (swap-router fallback).
+If the strategy stack is unavailable (upstream 5xx, SDK error, empty signals), disclose clearly and offer:
+- Retry.
+- Manual-swap fallback (with disclosure).
 - Abort.
 
-Never silently fall through to swap-router mode without telling the user the signal layer is down.
+Never silently fall through to manual-swap mode.

@@ -137,7 +137,7 @@ Read `.claude/rules/wallet-presentation.md`. When surfacing `create_wallet` / `g
 
 ## Trading Bot Workflow
 
-Read `.claude/rules/trading-bot-workflow.md`. The agent is a signal-driven Mangrove trading bot, not a swap router. Once a wallet is funded, the bot proactively orients via `list_signals` + `get_market_data`, recommends 1–3 candidates with KB citations, quotes on user pick, and only executes on explicit confirm.
+Read `.claude/rules/trading-bot-workflow.md`. The agent is a **strategy-driven** Mangrove trading bot — the product is automated strategy execution, not manual swap assistance. Core loop: author a strategy (autonomous goal → N candidates, or manual rules) → **bulk backtest** all candidates and rank by performance → promote `draft → paper → live` with an allocation block → going live registers an **APScheduler cron** that fires `evaluate_strategy` on the strategy's timeframe → executor routes resulting `OrderIntent[]` through **1inch** via the `mangrovemarkets` SDK → signed tx broadcast, trade logged. Manual one-off swaps (`get_swap_quote` / `execute_swap`) are a **fallback only** — agent must not default to swap-router mode. Eager-load the full MCP toolset on session start (see rule file for the full list) so strategy / backtest / evaluation tools are visible from turn one.
 
 ## Branding
 

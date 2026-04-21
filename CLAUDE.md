@@ -135,6 +135,10 @@ Read `.claude/rules/git-workflow.md`. Never commit to main. Feature branches + P
 
 Read `.claude/rules/wallet-presentation.md`. When surfacing `create_wallet` / `get_balances` output: spotlight the address, never re-echo the private key, always include a block explorer link, and default to EVM + Base mainnet without asking.
 
+## Trading Bot Workflow
+
+Read `.claude/rules/trading-bot-workflow.md`. The agent is a signal-driven Mangrove trading bot, not a swap router. Once a wallet is funded, the bot proactively orients via `list_signals` + `get_market_data`, recommends 1–3 candidates with KB citations, quotes on user pick, and only executes on explicit confirm.
+
 ## Branding
 
 Edit `branding.json` and update `assets/` to re-skin. Run `init.sh` to propagate changes.

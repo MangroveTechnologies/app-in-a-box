@@ -43,6 +43,11 @@ logs/
 # Docker
 docker-compose.override.yml
 
+# Per-user onboarding state (written by /onboard skill on completion;
+# presence suppresses the SessionStart onboarding reminder). This is
+# intentionally NOT committed -- each clone re-onboards on first run.
+.claude/.onboarded
+
 # Internal docs (not for public repo)
 TEMPLATE-REVIEW.md
 ROADMAP.md

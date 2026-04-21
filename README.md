@@ -89,13 +89,15 @@ Exits 0 on success. Typical runtime: under 10 seconds once the image is built.
 
 ### 5. Connect Claude Code
 
-Point Claude Code at the running agent by dropping the MCP config into a project's `.mcp.json` (or `~/.claude/mcp/defi-agent.json` for a global entry):
+Register the MCP server with Claude Code. One command — it reads your API key from `local-config.json`, checks the container is healthy, and writes a user-scope registration so Claude Code loads the tools on next start.
 
 ```bash
-cp .mcp.json.example ./.mcp.json
+./scripts/setup-mcp.sh
 ```
 
-Then start a Claude Code session in that directory. All 22 agent tools appear automatically.
+Then start (or restart) a Claude Code session in that directory. All 22 agent tools appear automatically.
+
+> **Why a script and not `.mcp.json`?** Claude Code's project-scope `.mcp.json` approval prompt is currently unreliable ([#9189](https://github.com/anthropics/claude-code/issues/9189)) — the "enable this MCP server?" prompt often doesn't persist across restarts. Registering via `claude mcp add` writes user-scope config keyed to this project directory and is honored reliably. `.mcp.json.example` is kept in the repo for reference; once the upstream bug is fixed, the cp-based flow will work too.
 
 ### 6. Your first trade
 

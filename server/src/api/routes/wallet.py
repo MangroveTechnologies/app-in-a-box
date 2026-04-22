@@ -32,6 +32,7 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
+from src.services.secret_vault import vault
 from src.services.wallet_manager import (
     RevealSecretResponse,
     StashSecretResponse,
@@ -45,7 +46,6 @@ from src.services.wallet_manager import (
     reveal_wallet_secret,
     stash_external_secret,
 )
-from src.services.secret_vault import vault
 from src.shared.auth.dependency import require_api_key
 from src.shared.clients.mangrove import mangrovemarkets_client
 from src.shared.errors import SdkError, SigningError

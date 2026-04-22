@@ -76,11 +76,14 @@ fi
 step "Stashing in the agent's in-process vault"
 # Send as JSON body. Use python to safely escape in case the secret
 # contains characters that would break a shell-quoted curl data arg.
-RESPONSE="$(python3 - <<PY
+# Export so the heredoc (run in a subshell via python3 - <<'PY') can
+# read via os.environ.
+export SECRET API_KEY BASE_URL
+RESPONSE="$(python3 - <<'PY'
 import json, urllib.request, os, sys
 body = json.dumps({"secret": os.environ["SECRET"]}).encode()
 req = urllib.request.Request(
-    "$BASE_URL/api/v1/agent/wallet/stash-secret",
+    os.environ["BASE_URL"] + "/api/v1/agent/wallet/stash-secret",
     data=body,
     method="POST",
     headers={"Content-Type": "application/json", "X-API-Key": os.environ["API_KEY"]},

@@ -85,10 +85,13 @@ else
   URL="$BASE_URL/api/v1/agent/wallet/$ARG/reveal"
 fi
 
-RESPONSE="$(python3 - <<PY
+# Export so the Python heredoc can read via os.environ.
+export API_KEY URL
+
+RESPONSE="$(python3 - <<'PY'
 import json, urllib.request, os, sys
 req = urllib.request.Request(
-    "$URL",
+    os.environ["URL"],
     headers={"X-API-Key": os.environ["API_KEY"]},
 )
 try:

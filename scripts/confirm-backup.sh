@@ -45,10 +45,14 @@ if ! curl -fsS -m 5 "$BASE_URL/health" >/dev/null 2>&1; then
   fail "$BASE_URL/health not responding. Is the agent running?"
 fi
 
-RESPONSE="$(python3 - <<PY
+# Export so the heredoc (with quoted 'PY' tag to disable shell
+# interpolation) can read via os.environ.
+export API_KEY BASE_URL ADDRESS
+RESPONSE="$(python3 - <<'PY'
 import json, urllib.request, os, sys
+url = os.environ["BASE_URL"] + "/api/v1/agent/wallet/" + os.environ["ADDRESS"] + "/confirm-backup"
 req = urllib.request.Request(
-    "$BASE_URL/api/v1/agent/wallet/$ADDRESS/confirm-backup",
+    url,
     data=b"{}",
     method="POST",
     headers={"Content-Type": "application/json", "X-API-Key": os.environ["API_KEY"]},

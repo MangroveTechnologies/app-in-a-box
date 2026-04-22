@@ -544,6 +544,108 @@ def _register_strategy(server: FastMCP) -> None:
     ))
 
     @server.tool()
+    async def search_reference_strategies(
+        asset: str,
+        timeframe: str | None = None,
+        category: str | None = None,
+        goal_hint: str | None = None,
+        limit: int = 5,
+        api_key: str = "",
+    ) -> str:
+        """Search curated reference strategies — Mechanism 2 of /create-strategy.
+
+        The agent calls this BEFORE picking signals/params manually. Each
+        returned reference has known-good entry/exit signals + parameter
+        choices. The agent picks one that matches user intent, then calls
+        build_strategy_from_reference to materialize it.
+
+        Ranks by specificity: asset+timeframe+category > asset+timeframe
+        > asset > category. Auto-detects category from goal_hint if not
+        supplied.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        from src.services import reference_strategies_service
+        items = reference_strategies_service.search(
+            asset=asset,
+            timeframe=timeframe,
+            category=category,
+            goal_hint=goal_hint,
+            limit=limit,
+        )
+        return json.dumps({
+            "asset": asset.upper(),
+            "timeframe": timeframe,
+            "category": category,
+            "count": len(items),
+            "strategies": [r.model_dump() for r in items],
+        })
+
+    register_tool(ToolEntry(
+        name="search_reference_strategies",
+        description=(
+            "Find curated reference strategies that match the user's goal "
+            "and asset. Returns ranked candidates with signals + parameter "
+            "choices that have worked in backtests. ALWAYS call this "
+            "before picking signals manually — it's the primary source of "
+            "parameter intuition."
+        ),
+        access="auth",
+        parameters=[
+            ToolParam(name="asset", type="string", required=True, description="Asset symbol (e.g. BTC, ETH)"),
+            ToolParam(name="timeframe", type="string", required=False, description="5m | 15m | 30m | 1h | 4h | 1d"),
+            ToolParam(name="category", type="string", required=False, description="momentum | mean_reversion | trend_following | breakout | volatility"),
+            ToolParam(name="goal_hint", type="string", required=False, description="Free text from the user's goal — auto-detects category if category is not supplied"),
+            ToolParam(name="limit", type="integer", required=False, description="Max results (default 5)"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def build_strategy_from_reference(
+        reference_id: str,
+        timeframe: str | None = None,
+        name: str | None = None,
+        api_key: str = "",
+    ) -> str:
+        """Materialize a reference into a create_strategy_manual payload.
+
+        Called after search_reference_strategies + user pick. Copies the
+        reference's signals EXACTLY (parameters untouched) and only
+        rewrites each signal's timeframe if overridden. Returns a payload
+        the caller passes straight to create_strategy_manual.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        from src.services import reference_strategies_service
+        try:
+            payload = reference_strategies_service.build_from_reference(
+                reference_id=reference_id,
+                timeframe_override=timeframe,
+                name=name,
+            )
+        except ValueError as e:
+            return json.dumps({"error": str(e), "code": "REFERENCE_NOT_FOUND"})
+        return json.dumps(payload)
+
+    register_tool(ToolEntry(
+        name="build_strategy_from_reference",
+        description=(
+            "After search_reference_strategies returns candidates and the "
+            "user picks one, call this to produce a create_strategy_manual "
+            "payload. Signals and params are copied exactly — the agent "
+            "must NOT modify them. Only timeframe and name can be overridden."
+        ),
+        access="auth",
+        parameters=[
+            ToolParam(name="reference_id", type="string", required=True, description="e.g. ref-001 — from search_reference_strategies"),
+            ToolParam(name="timeframe", type="string", required=False, description="Override the reference's timeframe (canonicalized)"),
+            ToolParam(name="name", type="string", required=False, description="Optional strategy name override"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
     async def list_strategies(status: str | None = None, limit: int = 50,
                               offset: int = 0, api_key: str = "") -> str:
         """List strategies, optionally filtered by status."""

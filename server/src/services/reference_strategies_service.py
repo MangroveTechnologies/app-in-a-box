@@ -1,0 +1,195 @@
+"""reference_strategies_service — curated seed library of known-good strategies.
+
+Mechanism 2 from the /create-strategy skill: instead of library-default
+parameter guessing, the agent pulls from a curated set of strategies
+that are known to backtest reasonably on the (asset, timeframe) combo.
+
+Today this is backed by a hand-curated JSON file. When MangroveOracle
+issue #156 + the MangroveAI reference-strategies endpoint land, this
+service swaps its backend to `mangroveai.reference_strategies.search()`
+with no change to callers. The interface here mirrors what that
+endpoint will return.
+
+See docs in `data/reference_strategies.json`.
+"""
+from __future__ import annotations
+
+import json
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
+from pydantic import BaseModel
+
+from src.shared import timeframes
+from src.shared.logging import get_logger
+
+_log = get_logger(__name__)
+
+_DATA_PATH = Path(__file__).parent / "data" / "reference_strategies.json"
+
+
+class ReferenceSignal(BaseModel):
+    name: str
+    signal_type: str  # TRIGGER | FILTER
+    params: dict[str, Any]
+
+
+class ReferenceStrategy(BaseModel):
+    id: str
+    label: str
+    asset: str
+    timeframe: str
+    category: str  # momentum | mean_reversion | trend_following | breakout | volatility
+    description: str
+    entry_signals: list[ReferenceSignal]
+    exit_signals: list[ReferenceSignal]
+    execution_config: dict[str, Any]
+    source: str
+    notes: str = ""
+
+
+@lru_cache(maxsize=1)
+def _load_all() -> list[ReferenceStrategy]:
+    """Read + validate the JSON seed file. Cached for process lifetime."""
+    if not _DATA_PATH.is_file():
+        _log.warning("reference_strategies.seed_missing", path=str(_DATA_PATH))
+        return []
+    raw = json.loads(_DATA_PATH.read_text())
+    items = raw.get("strategies", [])
+    parsed: list[ReferenceStrategy] = []
+    for i, item in enumerate(items):
+        try:
+            parsed.append(ReferenceStrategy.model_validate(item))
+        except Exception as e:  # noqa: BLE001 — validation errors are loud enough in logs
+            _log.warning("reference_strategies.invalid_entry", index=i, error=str(e), id=item.get("id"))
+    _log.info("reference_strategies.loaded", count=len(parsed), path=str(_DATA_PATH))
+    return parsed
+
+
+def _detect_category(text: str) -> str | None:
+    """Auto-detect intended strategy category from a user-supplied goal/style string.
+
+    Mirrors ai_copilot's `_detect_strategy_type` in shape.
+    """
+    t = (text or "").lower()
+    if any(k in t for k in ("mean revers", "bollinger", "oversold", "bounce", "buy the dip")):
+        return "mean_reversion"
+    if any(k in t for k in ("breakout", "donchian", "channel", "range expansion", "ichimoku")):
+        return "breakout"
+    if any(k in t for k in ("momentum", "macd", "roc", "stochastic", "rsi cross")):
+        return "momentum"
+    if any(k in t for k in ("volatility", "atr", "squeeze", "high vol", "vol expansion")):
+        return "volatility"
+    if any(k in t for k in ("trend", "ema cross", "sma cross", "golden cross", "adx", "supertrend")):
+        return "trend_following"
+    return None
+
+
+def search(
+    asset: str,
+    timeframe: str | None = None,
+    category: str | None = None,
+    goal_hint: str | None = None,
+    limit: int = 5,
+) -> list[ReferenceStrategy]:
+    """Return up to `limit` reference strategies matching the filter.
+
+    Ranking (most → least specific):
+      1. exact asset + exact timeframe + exact category match
+      2. exact asset + exact timeframe (any category)
+      3. exact asset (any timeframe or category)
+      4. exact category match only (for cross-asset learnings)
+      5. everything else, capped at `limit`
+
+    If `category` is None and `goal_hint` is set, a category is auto-
+    detected from the hint via `_detect_category`.
+    """
+    asset_u = (asset or "").upper().strip()
+    tf = timeframes.canonicalize_timeframe(timeframe) if timeframe else None
+    cat = (category or _detect_category(goal_hint or "") or None)
+    if cat:
+        cat = cat.lower()
+
+    all_refs = _load_all()
+
+    # Score each ref by specificity. Higher = better match.
+    def score(r: ReferenceStrategy) -> int:
+        s = 0
+        if asset_u and r.asset.upper() == asset_u:
+            s += 8
+        if tf and timeframes.canonicalize_timeframe(r.timeframe) == tf:
+            s += 4
+        if cat and r.category.lower() == cat:
+            s += 2
+        return s
+
+    ranked = sorted(all_refs, key=lambda r: (-score(r), r.id))
+    # Drop any with score 0 ONLY if we have better matches; otherwise fall
+    # through to show something rather than nothing.
+    top = [r for r in ranked if score(r) > 0]
+    if len(top) >= limit:
+        return top[:limit]
+    # Pad with the rest (preserves ordering).
+    seen = {r.id for r in top}
+    for r in ranked:
+        if r.id not in seen:
+            top.append(r)
+            if len(top) >= limit:
+                break
+    return top[:limit]
+
+
+def get(reference_id: str) -> ReferenceStrategy | None:
+    """Look up a single reference by id."""
+    for r in _load_all():
+        if r.id == reference_id:
+            return r
+    return None
+
+
+def list_all() -> list[ReferenceStrategy]:
+    """Return the whole seed set. Mainly for diagnostics / docs."""
+    return list(_load_all())
+
+
+def build_from_reference(
+    reference_id: str,
+    timeframe_override: str | None = None,
+    name: str | None = None,
+) -> dict[str, Any]:
+    """Produce a create_strategy_manual-compatible payload from a reference.
+
+    Copies the reference's signals EXACTLY, only rewriting each signal's
+    `timeframe` field if `timeframe_override` is supplied (and canonicalizes
+    whatever it gets). Matches ai_copilot's build_strategy skill contract:
+    reference params are trusted; user only picks timeframe + name.
+
+    Raises ValueError if reference_id is unknown.
+    """
+    ref = get(reference_id)
+    if ref is None:
+        raise ValueError(f"reference_id {reference_id!r} not found")
+
+    tf = timeframes.canonicalize_timeframe(timeframe_override or ref.timeframe)
+
+    def _to_rule(sig: ReferenceSignal) -> dict[str, Any]:
+        return {
+            "name": sig.name,
+            "signal_type": sig.signal_type,
+            "timeframe": tf,
+            "params": dict(sig.params),
+        }
+
+    entry = [_to_rule(s) for s in ref.entry_signals]
+    exit_rules = [_to_rule(s) for s in ref.exit_signals]
+
+    return {
+        "name": name or f"{ref.label} [from {ref.id}]",
+        "asset": ref.asset,
+        "timeframe": tf,
+        "entry": entry,
+        "exit": exit_rules,
+        "execution_config": dict(ref.execution_config),
+        "source_reference_id": ref.id,
+    }

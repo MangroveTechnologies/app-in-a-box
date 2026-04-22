@@ -76,7 +76,16 @@ class SwapRequest(BaseModel):
     amount: float
     chain_id: int
     wallet_address: str
-    slippage: float = 1.0
+    slippage_pct: float = Field(
+        ...,
+        description=(
+            "Slippage tolerance as DECIMAL (0.005 = 0.5%, 0.01 = 1%). "
+            "REQUIRED — no default. Picking a tolerance is a risk "
+            "decision the user must make explicitly for live trades. "
+            "Converted to the upstream percentage convention at the "
+            "dex.prepare_swap() boundary."
+        ),
+    )
     mev_protection: bool = False
     venue_id: str | None = None
     confirm: bool = Field(
@@ -127,6 +136,7 @@ async def dex_swap(req: SwapRequest) -> dict:
         wallet_address=req.wallet_address,
         chain_id=req.chain_id,
         venue_id=req.venue_id,
+        slippage_pct=req.slippage_pct,
     )
     return {
         "tx_hash": trade.tx_hash,

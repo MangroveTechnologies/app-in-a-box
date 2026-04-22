@@ -126,11 +126,30 @@ def test_swap_requires_confirm(client):
         headers=_auth(),
         json={
             "input_token": "USDC", "output_token": "ETH", "amount": 100.0,
-            "chain_id": 84532, "wallet_address": "0xabc", "confirm": False,
+            "chain_id": 84532, "wallet_address": "0xabc",
+            "slippage_pct": 0.005, "confirm": False,
         },
     )
     assert r.status_code == 400
     assert r.json()["code"] == "CONFIRMATION_REQUIRED"
+
+
+def test_swap_requires_explicit_slippage(client):
+    """slippage_pct has no default — picking a tolerance is a risk
+    decision the user must make explicitly for every live swap."""
+    r = client.post(
+        "/api/v1/agent/dex/swap",
+        headers=_auth(),
+        json={
+            "input_token": "USDC", "output_token": "ETH", "amount": 100.0,
+            "chain_id": 84532, "wallet_address": "0xabc", "confirm": True,
+        },
+    )
+    assert r.status_code == 422  # Pydantic rejects missing required field
+    body = r.json()
+    errors = body.get("detail", [])
+    missing_fields = [e["loc"][-1] for e in errors if e.get("type") == "missing"]
+    assert "slippage_pct" in missing_fields
 
 
 def test_swap_happy_path(client):
@@ -139,7 +158,8 @@ def test_swap_happy_path(client):
         headers=_auth(),
         json={
             "input_token": "USDC", "output_token": "ETH", "amount": 100.0,
-            "chain_id": 84532, "wallet_address": "0xabc", "confirm": True,
+            "chain_id": 84532, "wallet_address": "0xabc",
+            "slippage_pct": 0.005, "confirm": True,
         },
     )
     assert r.status_code == 200

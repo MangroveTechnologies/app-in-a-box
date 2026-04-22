@@ -288,7 +288,7 @@ def create_autonomous(req: StrategyAutonomousRequest) -> tuple[StrategyDetailRes
         detail,
         entry=winner.candidate.entry,
         exit_rules=winner.candidate.exit,
-        execution_config=backtest_service._DEFAULT_EXECUTION_CONFIG.copy(),
+        execution_config=backtest_service.flattened_defaults(),
         generation_report=generation_report,
     )
     row = _get_row(local_id)
@@ -332,7 +332,7 @@ def create_manual(req: StrategyManualRequest) -> StrategyDetailResponse:
         detail,
         entry=req.entry,
         exit_rules=req.exit,
-        execution_config=req.execution_config or backtest_service._DEFAULT_EXECUTION_CONFIG.copy(),
+        execution_config=req.execution_config or backtest_service.flattened_defaults(),
         generation_report=None,
     )
     row = _get_row(local_id)

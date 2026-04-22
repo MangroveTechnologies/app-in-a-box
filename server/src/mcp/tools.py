@@ -284,24 +284,37 @@ def _register_dex(server: FastMCP) -> None:
     async def get_swap_quote(
         input_token: str, output_token: str, amount: float,
         chain_id: int, venue_id: str | None = None,
+        mode: str | None = None,
         api_key: str = "",
     ) -> str:
-        """Get a swap quote."""
+        """Get a DEX swap quote.
+
+        Mirrors `mangrovemarkets.dex.get_quote(input_token, output_token,
+        amount, venue_id, chain_id, mode)`. `mode` is an optional
+        routing hint recognized by some venues (e.g. 1inch supports
+        modes that bias for gas-cost vs price-improvement).
+        """
         if not _require(api_key):
             return _auth_error()
         try:
             from src.shared.clients.mangrove import mangrovemarkets_client
-            q = mangrovemarkets_client().dex.get_quote(
-                input_token=input_token, output_token=output_token,
-                amount=amount, chain_id=chain_id, venue_id=venue_id,
-            )
+            kwargs: dict[str, Any] = {
+                "input_token": input_token,
+                "output_token": output_token,
+                "amount": amount,
+                "chain_id": chain_id,
+                "venue_id": venue_id,
+            }
+            if mode is not None:
+                kwargs["mode"] = mode
+            q = mangrovemarkets_client().dex.get_quote(**kwargs)
             return json.dumps(_dump(q))
         except AgentError as e:
             return _handle_agent_error(e)
 
     register_tool(ToolEntry(
         name="get_swap_quote",
-        description="Get a DEX swap quote.",
+        description="Get a DEX swap quote. Optionally pin a venue + mode.",
         access="auth",
         parameters=[
             ToolParam(name="input_token", type="string", required=True, description="Input token"),
@@ -309,6 +322,7 @@ def _register_dex(server: FastMCP) -> None:
             ToolParam(name="amount", type="number", required=True, description="Input amount"),
             ToolParam(name="chain_id", type="integer", required=True, description="EVM chain id"),
             ToolParam(name="venue_id", type="string", required=False, description="Optional specific venue"),
+            ToolParam(name="mode", type="string", required=False, description="Optional routing hint (venue-specific)"),
             _APIKEY,
         ],
     ))
@@ -316,13 +330,22 @@ def _register_dex(server: FastMCP) -> None:
     @server.tool()
     async def execute_swap(
         input_token: str, output_token: str, amount: float,
-        chain_id: int, wallet_address: str,
-        slippage: float = 1.0, venue_id: str | None = None,
+        chain_id: int, wallet_address: str, slippage_pct: float,
+        venue_id: str | None = None,
         confirm: bool = False,
         api_key: str = "",
     ) -> str:
-        """Execute a swap. Requires confirm=true. Full 6-step flow with
-        client-side signing; SDK never sees keys."""
+        """Execute a swap. Requires confirm=true + explicit slippage_pct.
+
+        Full 6-step flow with client-side signing; SDK never sees keys.
+
+        `slippage_pct` is REQUIRED and specified as a DECIMAL
+        (0.005 = 0.5%, 0.01 = 1%, 0.02 = 2%). No default — picking
+        a slippage tolerance is a risk decision the user must make
+        explicitly for live trades. Converted to the upstream
+        percentage convention (multiplied by 100) at the
+        `dex.prepare_swap()` boundary.
+        """
         if not _require(api_key):
             return _auth_error()
         try:
@@ -340,7 +363,8 @@ def _register_dex(server: FastMCP) -> None:
                                  amount=amount, reason="user-initiated")
             trade = execute_one(intent, mode="live",
                                 wallet_address=wallet_address,
-                                chain_id=chain_id, venue_id=venue_id)
+                                chain_id=chain_id, venue_id=venue_id,
+                                slippage_pct=slippage_pct)
             return json.dumps({
                 "tx_hash": trade.tx_hash, "status": trade.status,
                 "input_token": trade.input_token, "input_amount": trade.input_amount,
@@ -353,7 +377,12 @@ def _register_dex(server: FastMCP) -> None:
 
     register_tool(ToolEntry(
         name="execute_swap",
-        description="Execute a DEX swap (requires confirm=true). Single code path shared with cron-driven trades.",
+        description=(
+            "Execute a DEX swap (requires confirm=true + explicit "
+            "slippage_pct). Single code path shared with cron-driven "
+            "trades. Slippage is always user-specified — no default — "
+            "because picking a tolerance is a risk decision."
+        ),
         access="auth",
         parameters=[
             ToolParam(name="input_token", type="string", required=True, description="Input token"),
@@ -361,7 +390,7 @@ def _register_dex(server: FastMCP) -> None:
             ToolParam(name="amount", type="number", required=True, description="Input amount"),
             ToolParam(name="chain_id", type="integer", required=True, description="EVM chain id"),
             ToolParam(name="wallet_address", type="string", required=True, description="Wallet from local store"),
-            ToolParam(name="slippage", type="number", required=False, description="Slippage % (default 1.0)"),
+            ToolParam(name="slippage_pct", type="number", required=True, description="Slippage tolerance as DECIMAL (0.005 = 0.5%, 0.01 = 1%). No default — user must choose."),
             ToolParam(name="venue_id", type="string", required=False, description="Optional specific venue"),
             ToolParam(name="confirm", type="boolean", required=True, description="Must be true"),
             _APIKEY,
@@ -376,46 +405,69 @@ def _register_dex(server: FastMCP) -> None:
 
 def _register_market(server: FastMCP) -> None:
     @server.tool()
-    async def get_ohlcv(symbol: str, timeframe: str = "1h",
-                        lookback_days: int = 30, api_key: str = "") -> str:
-        """OHLCV bars for an asset."""
+    async def get_ohlcv(symbol: str, lookback_days: int = 30,
+                        provider: str | None = None,
+                        api_key: str = "") -> str:
+        """OHLCV bars for an asset.
+
+        Thin wrapper over `mangroveai.crypto_assets.get_ohlcv(symbol, days,
+        provider)`. The SDK does NOT accept a timeframe — the upstream
+        endpoint returns the provider's native bar granularity (1h for
+        most). A previous version of this tool advertised a `timeframe`
+        parameter; it was silently dropped by the SDK. Removed to stop
+        misleading callers.
+        """
         if not _require(api_key):
             return _auth_error()
         from src.shared.clients.mangrove import mangroveai_client
-        try:
-            result = mangroveai_client().crypto_assets.get_ohlcv(
-                symbol=symbol, timeframe=timeframe, days=lookback_days,
-            )
-        except TypeError:
-            result = mangroveai_client().crypto_assets.get_ohlcv(symbol)
+        kwargs: dict[str, Any] = {"symbol": symbol, "days": lookback_days}
+        if provider is not None:
+            kwargs["provider"] = provider
+        result = mangroveai_client().crypto_assets.get_ohlcv(**kwargs)
         return json.dumps(_dump(result))
 
     register_tool(ToolEntry(
         name="get_ohlcv",
-        description="OHLCV bars for an asset.",
+        description=(
+            "OHLCV bars for an asset. Bar granularity is set by the "
+            "data provider (typically 1h). No `timeframe` parameter — "
+            "the SDK / upstream endpoint don't support overriding bar "
+            "size at this call site."
+        ),
         access="auth",
         parameters=[
-            ToolParam(name="symbol", type="string", required=True, description="Asset symbol"),
-            ToolParam(name="timeframe", type="string", required=False, description="5m | 15m | 30m | 1h | 4h | 1d (1m not supported)"),
-            ToolParam(name="lookback_days", type="integer", required=False, description="History window in days"),
+            ToolParam(name="symbol", type="string", required=True, description="Asset symbol (e.g. BTC, ETH)"),
+            ToolParam(name="lookback_days", type="integer", required=False, description="History window in days (default 30)"),
+            ToolParam(name="provider", type="string", required=False, description="Optional CEX provider override"),
             _APIKEY,
         ],
     ))
 
     @server.tool()
-    async def get_market_data(symbol: str, api_key: str = "") -> str:
-        """Current market data for an asset."""
+    async def get_market_data(
+        symbol: str, provider: str | None = None, api_key: str = "",
+    ) -> str:
+        """Current market data for an asset.
+
+        Thin wrapper over `mangroveai.crypto_assets.get_market_data(symbol,
+        *, provider)`. `provider` selects a specific data source; omit to
+        use the SDK default.
+        """
         if not _require(api_key):
             return _auth_error()
         from src.shared.clients.mangrove import mangroveai_client
-        return json.dumps(_dump(mangroveai_client().crypto_assets.get_market_data(symbol)))
+        kwargs: dict[str, Any] = {"symbol": symbol}
+        if provider is not None:
+            kwargs["provider"] = provider
+        return json.dumps(_dump(mangroveai_client().crypto_assets.get_market_data(**kwargs)))
 
     register_tool(ToolEntry(
         name="get_market_data",
-        description="Current price, market cap, volume, 24h/7d change.",
+        description="Current price, market cap, volume, 24h/7d change. Optionally pin a provider.",
         access="auth",
         parameters=[
             ToolParam(name="symbol", type="string", required=True, description="Asset symbol"),
+            ToolParam(name="provider", type="string", required=False, description="Optional data provider override"),
             _APIKEY,
         ],
     ))
@@ -731,10 +783,7 @@ def _register_strategy(server: FastMCP) -> None:
         lookback_days: int | None = None,
         lookback_hours: int | None = None,
         start_date: str | None = None, end_date: str | None = None,
-        slippage_pct: float | None = None,
-        fee_pct: float | None = None,
-        max_hold_time_hours: int | None = None,
-        overrides: dict | None = None,
+        config: dict | None = None,
         api_key: str = "",
     ) -> str:
         """Run a backtest against an existing strategy (mode=quick|full).
@@ -743,6 +792,12 @@ def _register_strategy(server: FastMCP) -> None:
           start_date+end_date > lookback_hours > lookback_days
           > lookback_months > timeframes.recommended_lookback_months
           (5m/15m/30m/1h → 3 mo, 4h → 6 mo, 1d → 12 mo).
+
+        `config` is a single dict that merges over the canonical
+        trading_defaults.json. Any SDK BacktestRequest field is valid —
+        slippage_pct, fee_pct, max_hold_time_hours, initial_balance,
+        max_risk_per_trade, reward_factor, atr_period, etc. Omit the
+        argument entirely to get a pure trading-defaults backtest.
         """
         if not _require(api_key):
             return _auth_error()
@@ -755,10 +810,7 @@ def _register_strategy(server: FastMCP) -> None:
                 lookback_hours=lookback_hours,
                 start_date=start_date,
                 end_date=end_date,
-                slippage_pct=slippage_pct,
-                fee_pct=fee_pct,
-                max_hold_time_hours=max_hold_time_hours,
-                overrides=overrides,
+                config=config,
             )))
         except AgentError as e:
             return _handle_agent_error(e)
@@ -766,11 +818,14 @@ def _register_strategy(server: FastMCP) -> None:
     register_tool(ToolEntry(
         name="backtest_strategy",
         description=(
-            "Backtest a strategy (quick or full). Window resolution: "
-            "start_date+end_date > lookback_hours > lookback_days > "
-            "lookback_months > timeframe-aware auto (5m-1h=3mo, 4h=6mo, "
-            "1d=12mo). Returns full metrics from the SDK, trade history, "
-            "and the resolved_window block for fallback detection."
+            "Backtest a strategy (quick or full). Window precedence: "
+            "start+end > hours > days > months > timeframe-aware auto "
+            "(5m-1h=3mo, 4h=6mo, 1d=12mo). `config` is a single dict "
+            "that merges over trading_defaults.json — use it for "
+            "slippage_pct, fee_pct, max_hold_time_hours, initial_balance, "
+            "max_risk_per_trade, reward_factor, atr_period, or any other "
+            "BacktestRequest field. Returns full SDK metrics, trade "
+            "history, and a resolved_window block for fallback detection."
         ),
         access="auth",
         parameters=[
@@ -778,13 +833,10 @@ def _register_strategy(server: FastMCP) -> None:
             ToolParam(name="mode", type="string", required=False, description="quick | full (default full)"),
             ToolParam(name="lookback_months", type="integer", required=False, description="Window in months (auto by timeframe if all window fields omitted)"),
             ToolParam(name="lookback_days", type="integer", required=False, description="Window in days (overrides lookback_months)"),
-            ToolParam(name="lookback_hours", type="integer", required=False, description="Window in hours (overrides lookback_days/months — use for short backtests)"),
-            ToolParam(name="start_date", type="string", required=False, description="ISO 8601 — pinned with end_date, overrides all lookback_* fields"),
+            ToolParam(name="lookback_hours", type="integer", required=False, description="Window in hours — use for short backtests"),
+            ToolParam(name="start_date", type="string", required=False, description="ISO 8601 — paired with end_date, overrides all lookback_* fields"),
             ToolParam(name="end_date", type="string", required=False, description="ISO 8601"),
-            ToolParam(name="slippage_pct", type="number", required=False, description="Override server default (trading_defaults.json)"),
-            ToolParam(name="fee_pct", type="number", required=False, description="Override server default"),
-            ToolParam(name="max_hold_time_hours", type="integer", required=False, description="Cap position hold time"),
-            ToolParam(name="overrides", type="object", required=False, description="Dict merged into execution_config (initial_balance, max_risk_per_trade, etc.)"),
+            ToolParam(name="config", type="object", required=False, description="Merges over trading_defaults.json (slippage_pct, max_risk_per_trade, initial_balance, reward_factor, atr_*, etc.)"),
             _APIKEY,
         ],
     ))

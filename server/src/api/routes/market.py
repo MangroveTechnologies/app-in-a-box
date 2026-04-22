@@ -21,25 +21,32 @@ def _dump(obj: Any) -> Any:
 
 
 @router.get("/ohlcv", summary="OHLCV bars for an asset")
-async def ohlcv(symbol: str, timeframe: str = "1h", lookback_days: int = 30) -> Any:
+async def ohlcv(
+    symbol: str, lookback_days: int = 30, provider: str | None = None,
+) -> Any:
+    """Mirrors `mangroveai.crypto_assets.get_ohlcv(symbol, *, days, provider)`.
+
+    No `timeframe` param — the SDK method doesn't accept one; bar
+    granularity is provider-native. Optional `provider` selects a
+    specific data source.
+    """
     try:
-        return _dump(mangroveai_client().crypto_assets.get_ohlcv(
-            symbol=symbol, timeframe=timeframe, days=lookback_days,
-        ))
-    except TypeError:
-        # Older SDK may use different kwarg names; fall back.
-        try:
-            return _dump(mangroveai_client().crypto_assets.get_ohlcv(symbol))
-        except Exception as e:  # noqa: BLE001
-            raise SdkError(f"crypto_assets.get_ohlcv failed: {e}") from e
+        kwargs: dict[str, Any] = {"symbol": symbol, "days": lookback_days}
+        if provider is not None:
+            kwargs["provider"] = provider
+        return _dump(mangroveai_client().crypto_assets.get_ohlcv(**kwargs))
     except Exception as e:  # noqa: BLE001
         raise SdkError(f"crypto_assets.get_ohlcv failed: {e}") from e
 
 
 @router.get("/data", summary="Current market data (price, market cap, volume)")
-async def market_data(symbol: str) -> Any:
+async def market_data(symbol: str, provider: str | None = None) -> Any:
+    """Mirrors `mangroveai.crypto_assets.get_market_data(symbol, *, provider)`."""
     try:
-        return _dump(mangroveai_client().crypto_assets.get_market_data(symbol))
+        kwargs: dict[str, Any] = {"symbol": symbol}
+        if provider is not None:
+            kwargs["provider"] = provider
+        return _dump(mangroveai_client().crypto_assets.get_market_data(**kwargs))
     except Exception as e:  # noqa: BLE001
         raise SdkError(f"crypto_assets.get_market_data failed: {e}") from e
 

@@ -31,14 +31,18 @@ def temp_db(tmp_path, monkeypatch):
     init_db()
     ss.start()  # so register_job works
 
-    # Seed a wallet for allocations.
+    # Seed a wallet for allocations. backup_confirmed_at is set so the
+    # live-promotion gate in strategy_service.update_status passes without
+    # requiring tests to go through the CLI confirm-backup flow.
     get_connection().execute(
         """INSERT INTO wallets
            (id, address, chain, network, chain_id, encrypted_secret,
-            encryption_method, label, created_at, metadata_json)
-           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            encryption_method, label, created_at, metadata_json,
+            backup_confirmed_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
         ("w1", "0xabc", "evm", "testnet", 84532, b"ciphertext",
-         "fernet-v1", "test", "2026-04-20T00:00:00+00:00", None),
+         "fernet-v1", "test", "2026-04-20T00:00:00+00:00", None,
+         "2026-04-20T00:00:00+00:00"),
     )
     get_connection().commit()
 

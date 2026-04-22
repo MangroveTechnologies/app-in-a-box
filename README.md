@@ -34,123 +34,126 @@ A local AI trading bot that:
 
 ---
 
-## Quick start (target: ≤ 5 minutes)
+## Prerequisites
 
-You need:
-- **Docker** (or Python 3.10+ if you'd rather run bare)
-- **A MangroveAI API key** — free from https://mangrovedeveloper.ai (dev_ or prod_ prefix)
-- **Claude Code** (optional, for the chat UX) — `npm install -g @anthropic-ai/claude-code`
+| Tool | Install | Why |
+|---|---|---|
+| **VSCode** | https://code.visualstudio.com/download | Universal editor + integrated terminal that works the same on macOS / Linux / Windows. Every instruction below assumes you open the repo in VSCode and use its built-in terminal (``Ctrl/Cmd+` ``). |
+| **Python 3.11+** | https://www.python.org/downloads/ | The agent is a Python FastAPI process. 3.11 is the minimum. |
+| **Git for Windows** (Windows only) | https://git-scm.com/download/win | Gives you Git Bash, so the `*.sh` scripts in this repo work identically to macOS / Linux. Set VSCode's default terminal to `Git Bash` via the command palette. |
+| **Claude Code** | `npm install -g @anthropic-ai/claude-code` | The chat UX. Optional if you only want the REST API. |
+| **MangroveAI API key** | Free at https://mangrovedeveloper.ai | `dev_...` or `prod_...`. The setup script will prompt for it. |
 
-### 1. Clone
+Docker is **optional** — see the alternate install path below. Bare-metal is the primary path because the `keyring` library can reach your OS keychain directly when the agent runs natively.
+
+---
+
+## Quick start — bare-metal (recommended)
+
+One command. It seeds your config (prompts for the API key), creates a venv, pip-installs dependencies, starts uvicorn in the background, registers the MCP server with Claude Code, and verifies `/health`.
 
 ```bash
 git clone https://github.com/MangroveTechnologies/app-in-a-box.git defi-agent
 cd defi-agent
+./setup.sh
 ```
 
-### 2. Configure
+First run takes ~60s (pip install + health wait). Re-runs are idempotent — it detects what's already done and skips.
 
-Copy the example config. This file is gitignored — edit it freely.
+When it's finished:
+- Agent runs at `http://localhost:8080` (pid in `agent-data/bare.pid`, logs in `agent-data/bare.log`).
+- `./scripts/verify_quickstart.sh --bare` passed → the tool catalog returned the expected set.
+- Claude Code's MCP registration now knows about `defi-agent`.
+
+**Start Claude Code in the repo directory** and the agent will greet you, walk through the security primer, and ask whether you have an existing wallet to import or want to create a fresh one. See *Your first trade* below.
+
+### Useful `./setup.sh` flags
+
+```
+./setup.sh --yes --api-key dev_xxx         # fully non-interactive (CI / scripts)
+./setup.sh --foreground                    # run uvicorn in your terminal (Ctrl+C to stop)
+./setup.sh --no-mcp                        # skip Claude Code registration
+./setup.sh --no-verify                     # skip the post-start verify pass
+./setup.sh --docker                        # use Docker instead of bare-metal
+```
+
+---
+
+## Alternate quick start — Docker
+
+If you can't run Python on the host (corporate restrictions, reproducibility mandate), Docker works the same way. The tradeoff: the container can't reach your OS keychain, so the Fernet master key lives in `./agent-data/master.key` (chmod 600, gitignored) instead of Keychain / Secret Service / Credential Manager.
 
 ```bash
-cp server/src/config/local-example-config.json server/src/config/local-config.json
-$EDITOR server/src/config/local-config.json
+git clone https://github.com/MangroveTechnologies/app-in-a-box.git defi-agent
+cd defi-agent
+./setup.sh --docker
 ```
 
-Two values to set:
+State is persisted in the `./agent-data/` directory (bind-mounted into the container). The directory mount avoids the macOS / Windows single-file bind-mount staleness that previously ate DB rows after rebuild.
 
-| Key | Why | What to put |
-|-----|-----|-------------|
-| `MANGROVE_API_KEY` | Authenticates you to the MangroveAI backend (strategies, signals, backtests, on-chain data). Free key at https://mangrovedeveloper.ai. | Your `dev_...` or `prod_...` key |
-| `MANGROVEMARKETS_BASE_URL` | Where the agent sends DEX calls (quotes, swaps, wallet ops). Defaults to localhost, which assumes you're running your own MangroveMarkets server. Most people want the hosted one. | `https://mangrovemarkets-pcqgpciucq-uc.a.run.app` |
+---
 
-Every other value in the file has a sensible default.
+## Your first trade
 
-### 3. Persist the encryption master key
+Start Claude Code in the repo directory. The agent auto-runs its first-run greeter: quick introduction, security primer (where your keys live, how imports work, what's gated on backup confirmation), status check, then one question — **existing wallet or fresh one?**
 
-The agent encrypts every wallet's private key with a Fernet master key. By default that key lives in your OS keychain (macOS Keychain / Linux Secret Service / Windows Credential Manager), but **those backends aren't reachable from inside a Docker container** — so without this step each container process generates a fresh in-memory key that dies on restart, stranding any wallets encrypted with it.
+### If you want a fresh wallet
 
-Run this once; it's idempotent:
+Just say "create a new wallet." The agent calls `create_wallet` with sane defaults (Base mainnet). The response carries a `secret_id` — NOT the plaintext key. The agent will tell you to run the backup command in your VSCode terminal:
 
 ```bash
-./scripts/init-master-key.sh
+./scripts/reveal-secret.sh <secret_id>
 ```
 
-The script generates a Fernet key and writes it to `MASTER_KEY_ENV_FALLBACK` in your gitignored `local-config.json`. Container reads it on startup, wallet secrets survive restarts.
-
-### 4. Run
-
-The agent stores its state in a local SQLite file `./agent.db`. Docker bind-mounts it so restarts preserve history. On macOS, Docker creates missing mount targets as directories (which breaks SQLite), so we pre-create the file:
+That prints your private key to **the terminal only** (never into the chat). Save it in a password manager / hardware wallet / paper, then tell the agent you've backed it up. The agent will run:
 
 ```bash
-touch agent.db
-docker compose up -d --build
+./scripts/confirm-backup.sh <wallet_address>
 ```
 
-First build takes ~60s. After that, startup is a few seconds.
+which unlocks live trading for that wallet. Paper mode works even without the backup confirmation — you can exercise the strategy flow on an unfunded wallet first.
 
-### 5. Verify
+### If you have an existing wallet to import
 
-One script that proves everything's wired up — checks Docker, config, `/health`, the tool catalog, and startup log events:
+The agent will tell you to open your terminal and run:
 
 ```bash
-./scripts/verify_quickstart.sh
+./scripts/stash-secret.sh
 ```
 
-Exits 0 on success. Typical runtime: under 10 seconds once the image is built.
+It prompts for your key with input hidden (no echo) and prints a short `secret_id`. Come back to Claude Code and say "import wallet secret_id X" — the agent calls `import_wallet` with that id. Your key never passes through the chat, the transcript, or Anthropic's API.
 
-### 6. Connect Claude Code
+### From there
 
-Register the MCP server with Claude Code. One command — it reads your API key from `local-config.json`, checks the container is healthy, and writes a user-scope registration so Claude Code loads the tools on next start.
+> "Create an autonomous momentum strategy for ETH on a 4-hour timeframe"
 
-```bash
-./scripts/setup-mcp.sh
-```
+The agent picks 5–10 candidate signal combinations, backtests each over a 3-month window, filters by win-rate and trade count, ranks by IRR, and returns the winner with metrics.
 
-Then start (or restart) a Claude Code session in that directory. All 22 agent tools appear automatically.
+> "Promote that to paper mode"
 
-> **Why a script and not `.mcp.json`?** Claude Code's project-scope `.mcp.json` approval prompt is currently unreliable ([#9189](https://github.com/anthropics/claude-code/issues/9189)) — the "enable this MCP server?" prompt often doesn't persist across restarts. Registering via `claude mcp add` writes user-scope config keyed to this project directory and is honored reliably. `.mcp.json.example` is kept in the repo for reference; once the upstream bug is fixed, the cp-based flow will work too.
+Registers a cron job at the strategy's timeframe. Every evaluation is logged; check with `list_evaluations`.
 
-### 7. Your first trade
+> "Go live with a $5 allocation from my wallet"
 
-Everything below is a natural-language prompt to Claude Code. The agent handles the tool calls.
+Requires `backup_confirmed_at` on the wallet — the agent will refuse otherwise with a clear remediation path. When live, evaluations fire at the timeframe cron and any resulting `OrderIntent[]` routes through 1inch via the `mangrovemarkets` SDK.
 
-1. **Create a dedicated trading wallet.**
-   > "Create a wallet on Base mainnet"
+## Safety model at a glance
 
-   The agent generates a fresh EVM wallet, shows the address + seed phrase **once**, then encrypts the secret to disk. Save the seed phrase offline (paper, hardware wallet, password manager) — it's not retrievable after.
-
-   Use a fresh wallet per project so a misbehaving strategy can only spend what you've deposited into it, never your personal holdings.
-
-2. **Deposit a small test amount.** Send 1–5 USDC from your own wallet or exchange to the address the agent gave you. Confirm it arrived before depositing more.
-   > "Check my balance"
-
-3. **Create a strategy from a plain-English goal.**
-   > "Create an autonomous momentum strategy for ETH on a 1-hour timeframe"
-
-   The agent picks 5–10 candidate signal combinations, quick-backtests each, filters by win-rate and trade-count, ranks by IRR, and deep-backtests the winner. You get the final metrics back.
-
-4. **Run more backtests if you want.**
-   > "Backtest that strategy over the last 6 months"
-
-5. **Activate — paper first, live when you trust it.**
-   > "Activate the strategy in paper mode"
-
-   Paper simulates fills at the current market price. Live executes real DEX swaps and requires explicit confirmation + an allocation amount.
-
-6. **Monitor.** Every tick and every trade is logged to the local DB.
-   > "Show me my last 10 trades"
+- **Your private keys never touch this chat.** `create_wallet` returns a `secret_id`, not the plaintext. Revealing is a separate CLI (`reveal-secret.sh`) that prints to your terminal only.
+- **Harness hooks block key pastes.** If you try to paste a key into Claude Code, `.claude/hooks/block-wallet-secrets.sh` refuses the prompt with an educational message. The hook is in `.claude/settings.json` — disabling it requires a commit.
+- **Live trading is gated on explicit backup confirmation.** After you save a wallet's secret off-agent, `./scripts/confirm-backup.sh <addr>` flips a flag. `execute_swap` and `update_strategy_status → live` refuse on wallets without it.
+- **Master key stays local.** Bare-metal: OS keychain. Docker: `./agent-data/master.key` (chmod 600, gitignored).
 
 ---
 
 ## What the agent can do
 
-All 22 core MCP tools (plus `hello_mangrove` x402 demo):
+All 23 core MCP tools (plus `hello_mangrove` x402 demo):
 
 | Category | Tools |
 |---|---|
 | Discovery (free) | `status`, `list_tools` |
-| Wallet | `create_wallet`, `list_wallets`, `get_balances` |
+| Wallet | `create_wallet`, `import_wallet`, `list_wallets`, `get_balances` |
 | DEX | `list_dex_venues`, `get_swap_quote`, `execute_swap` |
 | Market | `get_ohlcv`, `get_market_data` |
 | Signals | `list_signals` |

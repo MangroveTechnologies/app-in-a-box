@@ -285,6 +285,12 @@ def execute_one(
                 "wallet_address is required for live execution.",
                 suggestion="Pass a wallet_address from the strategy's active allocation, or from the /dex/swap request body.",
             )
+        # Backup gate: live trading refuses on wallets the user hasn't
+        # confirmed backing up. The user's signed-off backup is the
+        # disaster-recovery path if the master key is ever lost; we will
+        # not move real funds without it. Paper mode is exempt (above).
+        from src.services.wallet_manager import require_backup_confirmed
+        require_backup_confirmed(wallet_address)
         return _live_swap(
             intent,
             strategy_id=strategy_id,

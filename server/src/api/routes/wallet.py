@@ -1,14 +1,29 @@
 """Wallet routes — auth-gated.
 
-- POST /api/v1/agent/wallet/create: create + store an encrypted wallet
-- GET  /api/v1/agent/wallet/list: list stored wallets (no secrets)
-- GET  /api/v1/agent/wallet/{address}/balances: token balances via SDK
-- GET  /api/v1/agent/wallet/{address}/portfolio: aggregate portfolio
-- GET  /api/v1/agent/wallet/{address}/history: transaction history
+- POST /api/v1/agent/wallet/create
+      Create + encrypt a wallet. Response carries secret_id (no plaintext).
+- POST /api/v1/agent/wallet/import
+      Import an existing wallet by secret_id (from a prior stash).
+- POST /api/v1/agent/wallet/stash-secret
+      Accept a raw plaintext secret from the localhost CLI (not MCP).
+      Returns secret_id. Called by scripts/stash-secret.sh.
+- GET  /api/v1/agent/wallet/reveal-secret/{secret_id}
+      Reveal + consume a stashed secret. Called by scripts/reveal-secret.sh.
+- GET  /api/v1/agent/wallet/{address}/reveal
+      Reveal-on-demand: decrypt a stored wallet's secret. Called by
+      scripts/reveal-secret.sh --address <addr>. Not an MCP tool.
+- POST /api/v1/agent/wallet/{address}/confirm-backup
+      Flip backup_confirmed_at. Called by scripts/confirm-backup.sh.
+- GET  /api/v1/agent/wallet/list
+- GET  /api/v1/agent/wallet/{address}/balances
+- GET  /api/v1/agent/wallet/{address}/portfolio
+- GET  /api/v1/agent/wallet/{address}/history
 
-wallet_manager handles create + list (local encryption). The three
-read endpoints pass through to mangrovemarkets_client directly — no
-wrapper service by design (see architecture doc).
+The reveal/stash endpoints live under the wallet router and are
+auth-gated like the rest — the agent's API key is shared with the user's
+localhost scripts via local-config.json, so the CLI authenticates the
+same way Claude Code's MCP does. These endpoints are NOT exposed via MCP
+tools; only the localhost bash scripts call them.
 """
 from __future__ import annotations
 
@@ -17,15 +32,23 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
+from src.services.secret_vault import vault
 from src.services.wallet_manager import (
+    RevealSecretResponse,
+    StashSecretResponse,
     WalletCreateResponse,
+    WalletImportResponse,
     WalletListItem,
+    confirm_backup,
     create_wallet,
+    import_wallet,
     list_wallets,
+    reveal_wallet_secret,
+    stash_external_secret,
 )
 from src.shared.auth.dependency import require_api_key
 from src.shared.clients.mangrove import mangrovemarkets_client
-from src.shared.errors import SdkError
+from src.shared.errors import SdkError, SigningError
 
 router = APIRouter(
     prefix="/wallet",
@@ -35,20 +58,43 @@ router = APIRouter(
 
 
 class WalletCreateRequest(BaseModel):
-    chain: str = Field(..., description="evm | xrpl (xrpl stubbed 501 in v1)")
-    network: str = Field("testnet", description="mainnet | testnet")
-    chain_id: int | None = Field(None, description="Required for evm")
+    chain: str = Field("evm", description="evm | xrpl (xrpl stubbed 501 in v1)")
+    network: str = Field("mainnet", description="mainnet | testnet")
+    chain_id: int | None = Field(8453, description="Required for evm; default 8453 (Base)")
     label: str | None = None
+
+
+class WalletImportRequest(BaseModel):
+    secret_id: str = Field(..., description="From POST /wallet/stash-secret")
+    chain: str = "evm"
+    network: str = "mainnet"
+    chain_id: int | None = 8453
+    label: str | None = None
+
+
+class StashSecretRequest(BaseModel):
+    secret: str = Field(..., description="Plaintext private key or mnemonic")
+    address_hint: str | None = Field(
+        None,
+        description="Optional — tags the vault entry so reveal-by-address can find it later",
+    )
+
+
+class ConfirmBackupResponse(BaseModel):
+    address: str
+    backup_confirmed_at: str
+    message: str
 
 
 @router.post(
     "/create",
     response_model=WalletCreateResponse,
-    summary="Create a new wallet",
+    summary="Create a new wallet (secret stashed, not returned)",
     description=(
-        "Creates + encrypts a wallet locally. The seed phrase is returned "
-        "ONCE here and never retrievable via the API afterwards. EVM only "
-        "in v1; XRPL returns 501."
+        "Creates + encrypts a wallet locally. Response carries only a "
+        "secret_id pointing at the in-process vault — run the reveal_cmd "
+        "out-of-band to back up the plaintext. The MCP transport never "
+        "sees the key."
     ),
     status_code=201,
 )
@@ -58,6 +104,108 @@ async def wallet_create(req: WalletCreateRequest) -> WalletCreateResponse:
         network=req.network,
         chain_id=req.chain_id,
         label=req.label,
+    )
+
+
+@router.post(
+    "/import",
+    response_model=WalletImportResponse,
+    summary="Import an existing wallet by secret_id",
+    description=(
+        "Expects the secret to already be in the vault via a prior call to "
+        "POST /wallet/stash-secret. This endpoint consumes the vault entry, "
+        "derives the address, encrypts, and persists."
+    ),
+    status_code=201,
+)
+async def wallet_import(req: WalletImportRequest) -> WalletImportResponse:
+    return import_wallet(
+        secret_id=req.secret_id,
+        chain=req.chain,
+        network=req.network,
+        chain_id=req.chain_id,
+        label=req.label,
+    )
+
+
+@router.post(
+    "/stash-secret",
+    response_model=StashSecretResponse,
+    summary="Stash a plaintext secret in the in-process vault",
+    description=(
+        "Called ONLY by the localhost CLI (scripts/stash-secret.sh). The "
+        "CLI reads the secret via `read -s` so it doesn't echo to the "
+        "terminal, POSTs here, and prints the returned id. The agent can "
+        "then consume the id via /wallet/import — the plaintext never "
+        "enters Claude Code's transcript or context."
+    ),
+)
+async def wallet_stash_secret(req: StashSecretRequest) -> StashSecretResponse:
+    from src.config import app_config
+    sid = stash_external_secret(req.secret, address_hint=req.address_hint)
+    return StashSecretResponse(
+        secret_id=sid,
+        secret_ttl_seconds=int(getattr(app_config, "SECRET_VAULT_TTL_SECONDS", 300)),
+    )
+
+
+@router.get(
+    "/reveal-secret/{secret_id}",
+    response_model=RevealSecretResponse,
+    summary="Reveal + consume a stashed secret (single-read)",
+    description=(
+        "Called ONLY by the localhost CLI (scripts/reveal-secret.sh). "
+        "Returns plaintext from the vault and evicts the entry. NEVER "
+        "called from an MCP tool."
+    ),
+)
+async def wallet_reveal_secret(secret_id: str) -> RevealSecretResponse:
+    try:
+        secret = vault.reveal(secret_id)
+    except KeyError as e:
+        raise SigningError(
+            "secret_id unknown or expired.",
+            suggestion="Re-create or re-stash the secret to get a fresh id.",
+        ) from e
+    return RevealSecretResponse(secret=secret, address=None)
+
+
+@router.get(
+    "/{address}/reveal",
+    response_model=RevealSecretResponse,
+    summary="Reveal-on-demand: decrypt a stored wallet's secret",
+    description=(
+        "Called ONLY by the localhost CLI (scripts/reveal-secret.sh "
+        "--address <addr>). Decrypts the wallet's encrypted_secret with "
+        "the master key and returns the plaintext. MCP tools MUST NOT "
+        "call this — it would leak plaintext back through Claude Code."
+    ),
+)
+async def wallet_reveal_by_address(address: str) -> RevealSecretResponse:
+    return reveal_wallet_secret(address)
+
+
+@router.post(
+    "/{address}/confirm-backup",
+    response_model=ConfirmBackupResponse,
+    summary="Confirm the user has backed up this wallet's secret",
+    description=(
+        "Flips wallets.backup_confirmed_at. Unlocks execute_swap and "
+        "update_strategy_status(live) for this wallet. The CLI "
+        "(scripts/confirm-backup.sh) calls this AFTER the user has "
+        "revealed the secret and stored it somewhere safe."
+    ),
+)
+async def wallet_confirm_backup(address: str) -> ConfirmBackupResponse:
+    item = confirm_backup(address)
+    return ConfirmBackupResponse(
+        address=item.address,
+        backup_confirmed_at=item.backup_confirmed_at.isoformat() if item.backup_confirmed_at else "",
+        message=(
+            "Backup confirmed. Live trading is now unlocked for this wallet. "
+            "If the master key is ever lost, you can recover funds with the "
+            "secret you backed up."
+        ),
     )
 
 

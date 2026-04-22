@@ -369,6 +369,12 @@ def update_status(strategy_id: str, update: StrategyStatusUpdate) -> StrategyDet
                 "Transition to live requires an allocation block.",
                 suggestion="Include allocation: {wallet_address, token, token_address, amount} in the request.",
             )
+        # Backup gate: the wallet that will be funding live trades must
+        # have been confirmed-backed-up by the user. Paper→live is the
+        # last chance to catch "user deposited money but never saved
+        # their recovery secret" before real funds move.
+        from src.services.wallet_manager import require_backup_confirmed
+        require_backup_confirmed(update.allocation.wallet_address)
         allocation_service.record_allocation(
             strategy_id=strategy_id,
             wallet_address=update.allocation.wallet_address,

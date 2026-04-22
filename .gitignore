@@ -53,4 +53,11 @@ TEMPLATE-REVIEW.md
 ROADMAP.md
 docs/plans/
 agent.db
+
+# All durable agent state lives here (SQLite DB, Fernet master key, any
+# future per-install state). Bind-mounted as a directory into Docker
+# containers so single-file bind-mount staleness can't eat state.
+# Per-machine, never committed.
+agent-data/
+
 server/scripts/first_live_swap.py

@@ -129,12 +129,19 @@ def _register_discovery(server: FastMCP) -> None:
 def _register_wallet(server: FastMCP) -> None:
     @server.tool()
     async def create_wallet(
-        chain: str, network: str = "testnet",
-        chain_id: int | None = None, label: str | None = None,
+        chain: str = "evm", network: str = "mainnet",
+        chain_id: int | None = 8453, label: str | None = None,
         api_key: str = "",
     ) -> str:
-        """Create + encrypt a wallet locally. Seed phrase returned ONCE.
-        EVM only in v1."""
+        """Create + encrypt a wallet locally.
+
+        The plaintext secret is NEVER returned in this response — it would
+        land in the Claude Code transcript and get sent to Anthropic. Instead
+        the response carries a `secret_id` referencing an in-process vault.
+        Tell the user to run the `reveal_cmd` in a terminal to back up the
+        secret. The id is TTL-bound (default 300s) and single-read.
+        EVM only in v1. Base mainnet (chain_id 8453) is the default.
+        """
         if not _require(api_key):
             return _auth_error()
         try:
@@ -146,12 +153,67 @@ def _register_wallet(server: FastMCP) -> None:
 
     register_tool(ToolEntry(
         name="create_wallet",
-        description="Create + encrypt a wallet. EVM only in v1.",
+        description=(
+            "Create + encrypt a wallet. Response carries only secret_id + "
+            "reveal_cmd — plaintext never enters the Claude Code transcript. "
+            "EVM only in v1."
+        ),
         access="auth",
         parameters=[
-            ToolParam(name="chain", type="string", required=True, description="evm | xrpl (xrpl stubbed 501)"),
-            ToolParam(name="network", type="string", required=False, description="mainnet | testnet"),
-            ToolParam(name="chain_id", type="integer", required=False, description="Required for evm"),
+            ToolParam(name="chain", type="string", required=False, description="evm (default). xrpl stubbed 501 in v1."),
+            ToolParam(name="network", type="string", required=False, description="mainnet (default) | testnet"),
+            ToolParam(name="chain_id", type="integer", required=False, description="Default 8453 (Base mainnet)"),
+            ToolParam(name="label", type="string", required=False, description="Human-friendly name"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def import_wallet(
+        secret_id: str,
+        chain: str = "evm", network: str = "mainnet",
+        chain_id: int | None = 8453, label: str | None = None,
+        api_key: str = "",
+    ) -> str:
+        """Import an existing wallet whose secret has been stashed in the vault.
+
+        The user's flow: run `./scripts/stash-secret.sh` in a terminal (it
+        prompts for the private key via `read -s` so it isn't echoed, posts
+        to /internal/stash-secret, prints the returned secret_id). Then
+        tell the agent to import that id. The private key NEVER enters
+        Claude Code's conversation context — this tool only handles the id.
+
+        Do NOT accept a raw private key or mnemonic as input to this tool,
+        and do NOT suggest the user paste one. If a user pastes a key in
+        chat, tell them to run stash-secret.sh instead and purge the key
+        from their message.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.services.wallet_manager import import_wallet as svc
+            result = svc(
+                secret_id=secret_id,
+                chain=chain, network=network,
+                chain_id=chain_id, label=label,
+            )
+            return json.dumps(result.model_dump(mode="json"))
+        except AgentError as e:
+            return _handle_agent_error(e)
+
+    register_tool(ToolEntry(
+        name="import_wallet",
+        description=(
+            "Import an existing wallet from a stashed secret_id. The user "
+            "must obtain the id by running scripts/stash-secret.sh in a "
+            "terminal FIRST — this tool refuses raw keys by design."
+        ),
+        access="auth",
+        parameters=[
+            ToolParam(name="secret_id", type="string", required=True, description="From scripts/stash-secret.sh output"),
+            ToolParam(name="chain", type="string", required=False, description="evm (default)"),
+            ToolParam(name="network", type="string", required=False, description="mainnet (default) | testnet"),
+            ToolParam(name="chain_id", type="integer", required=False, description="Default 8453 (Base mainnet)"),
             ToolParam(name="label", type="string", required=False, description="Human-friendly name"),
             _APIKEY,
         ],

@@ -32,6 +32,7 @@ from src.services import (
     scheduler_service,
     trade_log,
 )
+from src.shared import timeframes
 from src.shared.clients.mangrove import mangroveai_client
 from src.shared.db.sqlite import get_connection
 from src.shared.errors import (
@@ -66,7 +67,10 @@ class StrategyAutonomousRequest(BaseModel):
     asset: str
     timeframe: str
     candidate_count: int = Field(7, ge=5, le=10)
-    backtest_lookback_months: int = 3
+    # None = auto-pick from timeframes.recommended_lookback_months(timeframe):
+    #   5m/15m/30m/1h → 3 months; 4h → 6 months; 1d → 12 months.
+    # Explicit value overrides the recommendation.
+    backtest_lookback_months: int | None = None
     seed: int | None = None  # reproducibility
 
 
@@ -216,13 +220,24 @@ def create_autonomous(req: StrategyAutonomousRequest) -> tuple[StrategyDetailRes
     Returns (strategy_detail_response, generation_report). The report is
     also persisted in the local strategies cache for audit.
     """
+    # Reject unsupported timeframes (e.g. 1m) up front — the server would
+    # otherwise silently fall back to 1h and produce misleading results.
+    timeframe = timeframes.canonicalize_timeframe(req.timeframe)
+
     candidates = candidate_generator.generate(
-        goal=req.goal, asset=req.asset, timeframe=req.timeframe,
+        goal=req.goal, asset=req.asset, timeframe=timeframe,
         n=req.candidate_count, seed=req.seed,
     )
 
+    # Use timeframe-aware recommended lookback if caller didn't specify one.
+    lookback_months = (
+        req.backtest_lookback_months
+        if req.backtest_lookback_months is not None
+        else timeframes.recommended_lookback_months(timeframe)
+    )
+
     results = backtest_service.quick_backtest_all(
-        candidates, lookback_months=req.backtest_lookback_months,
+        candidates, lookback_months=lookback_months,
     )
     survivors, rejected = backtest_service.filter_and_rank(results)
 
@@ -234,7 +249,7 @@ def create_autonomous(req: StrategyAutonomousRequest) -> tuple[StrategyDetailRes
 
     winner = survivors[0]
     full = backtest_service.full_backtest(
-        winner.candidate, lookback_months=req.backtest_lookback_months,
+        winner.candidate, lookback_months=lookback_months,
     )
 
     # Build the SDK request from the winning candidate.
@@ -287,6 +302,18 @@ def create_autonomous(req: StrategyAutonomousRequest) -> tuple[StrategyDetailRes
 
 def create_manual(req: StrategyManualRequest) -> StrategyDetailResponse:
     """Manual creation — caller supplies explicit entry/exit rules."""
+    # Reject unsupported timeframes up front. For manual strategies the
+    # timeframe is embedded in each entry/exit rule; we also accept a
+    # top-level req.timeframe which takes precedence when set.
+    if getattr(req, "timeframe", None):
+        timeframes.canonicalize_timeframe(req.timeframe)
+    else:
+        # Validate the per-rule timeframe — matches what _extract_timeframe
+        # would pull when there's no top-level field.
+        inferred = req.entry[0].get("timeframe") if req.entry else None
+        if inferred:
+            timeframes.canonicalize_timeframe(inferred)
+
     _validate_composition(req.entry, req.exit)
 
     try:

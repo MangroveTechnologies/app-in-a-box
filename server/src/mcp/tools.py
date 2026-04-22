@@ -396,7 +396,7 @@ def _register_market(server: FastMCP) -> None:
         access="auth",
         parameters=[
             ToolParam(name="symbol", type="string", required=True, description="Asset symbol"),
-            ToolParam(name="timeframe", type="string", required=False, description="1m | 5m | 15m | 1h | 4h | 1d"),
+            ToolParam(name="timeframe", type="string", required=False, description="5m | 15m | 30m | 1h | 4h | 1d (1m not supported)"),
             ToolParam(name="lookback_days", type="integer", required=False, description="History window in days"),
             _APIKEY,
         ],
@@ -497,9 +497,9 @@ def _register_strategy(server: FastMCP) -> None:
         parameters=[
             ToolParam(name="goal", type="string", required=True, description="Natural-language goal"),
             ToolParam(name="asset", type="string", required=True, description="Asset symbol"),
-            ToolParam(name="timeframe", type="string", required=True, description="1m | 5m | 15m | 1h | 4h | 1d"),
+            ToolParam(name="timeframe", type="string", required=True, description="5m | 15m | 30m | 1h | 4h | 1d (1m not supported)"),
             ToolParam(name="candidate_count", type="integer", required=False, description="5-10"),
-            ToolParam(name="backtest_lookback_months", type="integer", required=False, description="Default 3"),
+            ToolParam(name="backtest_lookback_months", type="integer", required=False, description="Default: auto by timeframe (5m-1h=3mo, 4h=6mo, 1d=12mo)"),
             ToolParam(name="seed", type="integer", required=False, description="Reproducibility seed"),
             _APIKEY,
         ],
@@ -535,7 +535,7 @@ def _register_strategy(server: FastMCP) -> None:
         parameters=[
             ToolParam(name="name", type="string", required=True, description="Strategy name"),
             ToolParam(name="asset", type="string", required=True, description="Asset symbol"),
-            ToolParam(name="timeframe", type="string", required=True, description="Timeframe"),
+            ToolParam(name="timeframe", type="string", required=True, description="5m | 15m | 30m | 1h | 4h | 1d (1m not supported)"),
             ToolParam(name="entry", type="array", required=True, description="Entry rules"),
             ToolParam(name="exit", type="array", required=False, description="Exit rules"),
             ToolParam(name="execution_config", type="object", required=False, description="Override exec params"),
@@ -625,32 +625,64 @@ def _register_strategy(server: FastMCP) -> None:
     @server.tool()
     async def backtest_strategy(
         strategy_id: str, mode: str = "full",
-        lookback_months: int = 3,
+        lookback_months: int | None = None,
+        lookback_days: int | None = None,
+        lookback_hours: int | None = None,
         start_date: str | None = None, end_date: str | None = None,
+        slippage_pct: float | None = None,
+        fee_pct: float | None = None,
+        max_hold_time_hours: int | None = None,
+        overrides: dict | None = None,
         api_key: str = "",
     ) -> str:
-        """Run a backtest against an existing strategy (mode=quick|full)."""
+        """Run a backtest against an existing strategy (mode=quick|full).
+
+        Window resolution (first non-null wins):
+          start_date+end_date > lookback_hours > lookback_days
+          > lookback_months > timeframes.recommended_lookback_months
+          (5m/15m/30m/1h → 3 mo, 4h → 6 mo, 1d → 12 mo).
+        """
         if not _require(api_key):
             return _auth_error()
         try:
             from src.api.routes.strategies import BacktestInput, backtest
             return json.dumps(await backtest(strategy_id, BacktestInput(
-                mode=mode, lookback_months=lookback_months,
-                start_date=start_date, end_date=end_date,
+                mode=mode,
+                lookback_months=lookback_months,
+                lookback_days=lookback_days,
+                lookback_hours=lookback_hours,
+                start_date=start_date,
+                end_date=end_date,
+                slippage_pct=slippage_pct,
+                fee_pct=fee_pct,
+                max_hold_time_hours=max_hold_time_hours,
+                overrides=overrides,
             )))
         except AgentError as e:
             return _handle_agent_error(e)
 
     register_tool(ToolEntry(
         name="backtest_strategy",
-        description="Backtest a strategy (quick or full).",
+        description=(
+            "Backtest a strategy (quick or full). Window resolution: "
+            "start_date+end_date > lookback_hours > lookback_days > "
+            "lookback_months > timeframe-aware auto (5m-1h=3mo, 4h=6mo, "
+            "1d=12mo). Returns full metrics from the SDK, trade history, "
+            "and the resolved_window block for fallback detection."
+        ),
         access="auth",
         parameters=[
             ToolParam(name="strategy_id", type="string", required=True, description="Agent strategy UUID"),
-            ToolParam(name="mode", type="string", required=False, description="quick | full"),
-            ToolParam(name="lookback_months", type="integer", required=False, description="Default 3"),
-            ToolParam(name="start_date", type="string", required=False, description="ISO 8601"),
+            ToolParam(name="mode", type="string", required=False, description="quick | full (default full)"),
+            ToolParam(name="lookback_months", type="integer", required=False, description="Window in months (auto by timeframe if all window fields omitted)"),
+            ToolParam(name="lookback_days", type="integer", required=False, description="Window in days (overrides lookback_months)"),
+            ToolParam(name="lookback_hours", type="integer", required=False, description="Window in hours (overrides lookback_days/months — use for short backtests)"),
+            ToolParam(name="start_date", type="string", required=False, description="ISO 8601 — pinned with end_date, overrides all lookback_* fields"),
             ToolParam(name="end_date", type="string", required=False, description="ISO 8601"),
+            ToolParam(name="slippage_pct", type="number", required=False, description="Override server default (trading_defaults.json)"),
+            ToolParam(name="fee_pct", type="number", required=False, description="Override server default"),
+            ToolParam(name="max_hold_time_hours", type="integer", required=False, description="Cap position hold time"),
+            ToolParam(name="overrides", type="object", required=False, description="Dict merged into execution_config (initial_balance, max_risk_per_trade, etc.)"),
             _APIKEY,
         ],
     ))

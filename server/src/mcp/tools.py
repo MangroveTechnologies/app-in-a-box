@@ -918,20 +918,47 @@ def _register_kb(server: FastMCP) -> None:
 
 
 def _register_hello_mangrove(server: FastMCP) -> None:
-    @server.tool()
-    async def hello_mangrove(payment: str = "") -> str:
-        """x402 demo tool. $0.05 USDC on Base. Smoke test for the payment path."""
-        if payment:
-            from src.shared.x402.server import verify_and_settle_payment
-            settlement = await verify_and_settle_payment(payment)
-            if settlement.get("error"):
-                return json.dumps(settlement)
-            from src.services.hello_mangrove import get_hello_mangrove
-            result = get_hello_mangrove()
-            result["settlement"] = settlement
-            return json.dumps(result)
-        from src.shared.x402.server import build_hello_mangrove_requirements
-        return json.dumps(build_hello_mangrove_requirements())
+    """Register hello_mangrove via the x402 library's MCP payment wrapper.
+
+    The wrapper intercepts tool calls, reads payment from MCP ``_meta``, verifies
+    and settles via the shared x402ResourceServer, and attaches the settlement
+    receipt to the result's ``_meta``. Clients using ``x402.mcp.x402MCPClient``
+    auto-handle the empty-payment -> sign -> retry round-trip.
+    """
+    from x402 import ResourceConfig
+    from x402.mcp import create_payment_wrapper
+    from x402.schemas import ResourceInfo as X402ResourceInfo
+
+    from src.services.hello_mangrove import get_hello_mangrove as _impl
+    from src.shared.x402.config import get_network, get_pay_to
+    from src.shared.x402.server import _ensure_initialized
+
+    resource_server = _ensure_initialized()
+    accepts = resource_server.build_payment_requirements(
+        ResourceConfig(
+            scheme="exact",
+            network=get_network(),
+            pay_to=get_pay_to(),
+            price="$0.05",
+        )
+    )
+
+    wrapper = create_payment_wrapper(
+        resource_server,
+        accepts=accepts,
+        resource=X402ResourceInfo(
+            url="mcp://hello_mangrove",
+            description="hello_mangrove message — $0.05 USDC donation",
+        ),
+    )
+
+    @server.tool(
+        name="hello_mangrove",
+        description="x402 demo: $0.05 USDC on Base. Smoke test for the payment path.",
+    )
+    @wrapper
+    async def hello_mangrove() -> str:
+        return json.dumps(_impl())
 
     register_tool(ToolEntry(
         name="hello_mangrove",
@@ -939,10 +966,5 @@ def _register_hello_mangrove(server: FastMCP) -> None:
         access="x402",
         price="$0.05 USDC",
         network="base",
-        parameters=[
-            ToolParam(
-                name="payment", type="string", required=False,
-                description="Base64-encoded x402 payment signature. Call with no parameters to get payment requirements.",
-            ),
-        ],
+        parameters=[],
     ))

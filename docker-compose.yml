@@ -9,8 +9,11 @@ services:
     environment:
       - ENVIRONMENT=local
     volumes:
-      # Persist SQLite DB + config across container restarts
-      - ./agent.db:/app/agent.db
+      # Durable agent state (SQLite DB + Fernet master key) as a directory
+      # mount. Single-file bind mounts on macOS/Windows drift between host
+      # and container — directory mounts don't. Everything that must
+      # survive a rebuild lives under agent-data/.
+      - ./agent-data/:/app/agent-data/
       - ./server/src/config/local-config.json:/app/src/config/local-config.json:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]

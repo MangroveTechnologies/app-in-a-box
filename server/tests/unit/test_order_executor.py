@@ -97,7 +97,13 @@ def mock_markets(monkeypatch):
 
 @pytest.fixture
 def stub_sign(monkeypatch):
-    """Stub wallet_manager.sign so live tests don't need a real wallet."""
+    """Stub wallet_manager.sign + backup gate so live tests don't need a
+    real wallet. The backup gate (require_backup_confirmed) runs on the
+    live path before signing — tests that stub signing also stub the gate."""
+    monkeypatch.setattr(
+        "src.services.wallet_manager.require_backup_confirmed",
+        lambda address: None,
+    )
     monkeypatch.setattr(
         "src.services.order_executor.wallet_sign",
         lambda payload, wallet_address, chain_id=None: "0xSIGNED",

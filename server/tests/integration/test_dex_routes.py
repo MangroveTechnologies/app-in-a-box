@@ -74,6 +74,13 @@ def client(tmp_path, monkeypatch):
         "src.services.order_executor.wallet_sign",
         lambda payload, wallet_address, chain_id=None: "0xSIGNED",
     )
+    # Backup gate stub — this test doesn't seed a wallet row, and
+    # execute_swap's gate calls require_backup_confirmed(address) which
+    # does a DB lookup. Bypass for this test.
+    monkeypatch.setattr(
+        "src.services.wallet_manager.require_backup_confirmed",
+        lambda address: None,
+    )
 
     from src.app import create_app
     app = create_app()

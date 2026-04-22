@@ -205,23 +205,21 @@ else
   ok "deps installed"
 
   step "4. start uvicorn"
-  # If already running, skip.
+  # Run from repo root so relative config paths (./agent-data/…) resolve
+  # the same way Docker resolves them (CWD=/app, agent-data/ alongside src/).
+  export PYTHONPATH="$REPO_ROOT/server:${PYTHONPATH:-}"
   if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
     info "uvicorn already running (pid $(cat "$PID_FILE"))"
   else
     if [ "$FOREGROUND" = "yes" ]; then
       info "running in foreground (Ctrl+C to stop)"
-      cd server
-      exec env ENVIRONMENT=local python3 -m uvicorn src.app:app \
+      exec env ENVIRONMENT=local PYTHONPATH="$PYTHONPATH" python3 -m uvicorn src.app:app \
         --host 0.0.0.0 --port 8080 --workers 1 --timeout-keep-alive 120
     else
-      (
-        cd server
-        nohup env ENVIRONMENT=local python3 -m uvicorn src.app:app \
-          --host 0.0.0.0 --port 8080 --workers 1 --timeout-keep-alive 120 \
-          > "$REPO_ROOT/$LOG_FILE" 2>&1 &
-        echo $! > "$REPO_ROOT/$PID_FILE"
-      )
+      nohup env ENVIRONMENT=local PYTHONPATH="$PYTHONPATH" python3 -m uvicorn src.app:app \
+        --host 0.0.0.0 --port 8080 --workers 1 --timeout-keep-alive 120 \
+        > "$REPO_ROOT/$LOG_FILE" 2>&1 &
+      echo $! > "$REPO_ROOT/$PID_FILE"
       info "uvicorn started in background (pid $(cat "$PID_FILE"))"
       info "logs: tail -f $LOG_FILE"
       info "stop: kill \$(cat $PID_FILE)"

@@ -87,8 +87,85 @@ def test_create_wallet_happy_path(client):
     body = r.json()
     assert body["address"] == _TEST_ADDRESS
     assert body["chain"] == "evm"
-    assert body["seed_phrase"] == _TEST_PRIVKEY  # one-time return
-    assert "chat transcript" in body["warning"]
+    # Phase-2 contract: the plaintext key MUST NOT appear in the response.
+    assert "seed_phrase" not in body
+    assert "private_key" not in body
+    assert _TEST_PRIVKEY not in r.text
+    # The response carries a secret_id that the CLI consumes via
+    # /wallet/reveal-secret/{id}. Plaintext flows out-of-band, never via MCP.
+    assert body["secret_id"]
+    assert body["reveal_cmd"].startswith("./scripts/reveal-secret.sh ")
+    assert body["backup_required"] is True
+    assert body["secret_type"] in {"private_key", "mnemonic"}
+    assert body["master_key_source"] in {"keyfile", "keychain", "generated_keyfile"}
+
+
+def test_stash_then_import_flow(client):
+    """CLI-style stash + MCP-style import end-to-end via HTTP."""
+    # Step 1: CLI-equivalent — stash the plaintext key out-of-band.
+    stash = client.post(
+        "/api/v1/agent/wallet/stash-secret",
+        headers=_auth(),
+        json={"secret": _TEST_PRIVKEY},
+    )
+    assert stash.status_code == 200
+    secret_id = stash.json()["secret_id"]
+    assert secret_id
+
+    # Step 2: agent-equivalent — import_wallet with the secret_id.
+    imp = client.post(
+        "/api/v1/agent/wallet/import",
+        headers=_auth(),
+        json={
+            "secret_id": secret_id,
+            "chain": "evm",
+            "network": "testnet",
+            "chain_id": 84532,
+        },
+    )
+    assert imp.status_code == 201
+    body = imp.json()
+    assert body["address"] == _TEST_ADDRESS
+    # Imported wallets auto-confirm backup.
+    assert body["backup_required"] is False
+
+
+def test_reveal_secret_is_single_read(client):
+    # Create a wallet to get a valid secret_id.
+    r = client.post(
+        "/api/v1/agent/wallet/create",
+        headers=_auth(),
+        json={"chain": "evm", "network": "testnet", "chain_id": 84532},
+    )
+    sid = r.json()["secret_id"]
+
+    # First reveal: 200 + plaintext.
+    r1 = client.get(f"/api/v1/agent/wallet/reveal-secret/{sid}", headers=_auth())
+    assert r1.status_code == 200
+    assert r1.json()["secret"] == _TEST_PRIVKEY
+
+    # Second reveal: rejected (vault consumed the entry).
+    r2 = client.get(f"/api/v1/agent/wallet/reveal-secret/{sid}", headers=_auth())
+    # The endpoint raises a SigningError which the exception handler maps to 4xx/5xx.
+    assert r2.status_code >= 400
+
+
+def test_confirm_backup_flips_flag(client):
+    client.post(
+        "/api/v1/agent/wallet/create",
+        headers=_auth(),
+        json={"chain": "evm", "network": "testnet", "chain_id": 84532},
+    )
+    r = client.post(
+        f"/api/v1/agent/wallet/{_TEST_ADDRESS}/confirm-backup",
+        headers=_auth(),
+        json={},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["address"] == _TEST_ADDRESS
+    assert body["backup_confirmed_at"]
+    assert "unlocked" in body["message"].lower() or "confirmed" in body["message"].lower()
 
 
 def test_create_wallet_xrpl_returns_501(client):

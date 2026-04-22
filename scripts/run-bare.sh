@@ -118,7 +118,11 @@ echo
 info "press Ctrl+C to stop. logs stream below."
 echo
 
-cd server
+# Run from repo root (CWD = $REPO_ROOT) so relative paths in config
+# like ./agent-data/agent.db resolve to the repo-root dir, matching how
+# Docker runs it (CWD=/app with agent-data/ bind-mounted alongside src/).
+# PYTHONPATH=server lets the `src.app:app` import resolve.
+export PYTHONPATH="$REPO_ROOT/server:${PYTHONPATH:-}"
 exec env ENVIRONMENT=local python3 -m uvicorn src.app:app \
   --host "$HOST" --port "$PORT" \
   --workers 1 --timeout-keep-alive 120

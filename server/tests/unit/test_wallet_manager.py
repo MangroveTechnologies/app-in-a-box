@@ -112,19 +112,32 @@ def test_decrypt_invalid_raises_signing_error(stub_keyring):
 
 
 def test_create_wallet_evm_persists_encrypted(temp_db, stub_keyring, mock_sdk_create):
+    from src.services.secret_vault import vault
     from src.services.wallet_manager import create_wallet
     from src.shared.db.sqlite import get_connection
 
     response = create_wallet(chain="evm", network="testnet", chain_id=84532, label="test")
     assert response.address == _TEST_ADDRESS
-    assert response.seed_phrase == _TEST_PRIVKEY
-    assert "chat transcript" in response.warning  # security warning present
-    # Deposit instructions guide the user to fund the wallet with a small test amount first.
+    # The plaintext is NOT in the response — only a secret_id pointing at the vault.
+    assert response.secret_id and len(response.secret_id) >= 16
+    assert response.secret_type == "private_key"
+    assert response.master_key_source in {"keyfile", "keychain", "generated_keyfile"}
+    assert response.reveal_cmd.startswith("./scripts/reveal-secret.sh ")
+    assert response.backup_required is True
+    # No seed_phrase/private_key field on the response model.
+    resp_dump = response.model_dump()
+    assert "seed_phrase" not in resp_dump
+    assert "private_key" not in resp_dump
+    # Deposit instructions still guide the user.
     assert _TEST_ADDRESS in response.deposit_instructions
     assert "small test amount" in response.deposit_instructions.lower()
 
+    # The vault must have the plaintext (so reveal-secret.sh can retrieve it).
+    plaintext = vault.reveal(response.secret_id)
+    assert plaintext == _TEST_PRIVKEY
+
     row = get_connection().execute(
-        "SELECT address, chain, chain_id, label, encrypted_secret, encryption_method FROM wallets WHERE address=?",
+        "SELECT address, chain, chain_id, label, encrypted_secret, encryption_method, backup_confirmed_at FROM wallets WHERE address=?",
         (_TEST_ADDRESS,),
     ).fetchone()
     assert row["chain"] == "evm"
@@ -132,6 +145,8 @@ def test_create_wallet_evm_persists_encrypted(temp_db, stub_keyring, mock_sdk_cr
     assert row["label"] == "test"
     assert row["encrypted_secret"] != _TEST_PRIVKEY.encode()  # actually encrypted
     assert row["encryption_method"] == "fernet-v1"
+    # Fresh wallet: backup not confirmed yet.
+    assert row["backup_confirmed_at"] is None
 
 
 def test_create_wallet_xrpl_raises(temp_db, stub_keyring, mock_sdk_create):
@@ -321,3 +336,115 @@ def test_sign_accepts_sdk_style_payload_with_chain_id(temp_db, stub_keyring, moc
     # and RLP list prefix, the first list element is chainId. Quick sanity:
     # not the chainId=0 signature bug we hit on the real swap.
     assert "021482" not in raw[:20]  # would be chainId=0 (01 48 = type+empty)
+
+
+# -- SecretVault flow (phase-2 contract: plaintext never in MCP responses) ----
+
+
+def test_secret_vault_single_read(temp_db, stub_keyring):
+    from src.services.secret_vault import vault
+
+    sid = vault.stash("hello-world")
+    assert vault.reveal(sid) == "hello-world"
+    # Second read fails — single-read semantics.
+    with pytest.raises(KeyError):
+        vault.reveal(sid)
+
+
+def test_stash_external_secret_then_import(temp_db, stub_keyring):
+    """End-to-end for the CLI-stash-then-MCP-import flow."""
+    from src.services.wallet_manager import import_wallet, stash_external_secret
+    from src.shared.db.sqlite import get_connection
+
+    sid = stash_external_secret(_TEST_PRIVKEY)
+    assert sid
+
+    response = import_wallet(secret_id=sid, chain="evm", network="testnet", chain_id=84532)
+    assert response.address == _TEST_ADDRESS
+    # Imported wallets auto-confirm backup (user typed the key into the CLI,
+    # so they have it off-agent by definition).
+    assert response.backup_required is False
+
+    row = get_connection().execute(
+        "SELECT backup_confirmed_at FROM wallets WHERE address=?",
+        (_TEST_ADDRESS,),
+    ).fetchone()
+    assert row["backup_confirmed_at"] is not None
+
+
+def test_import_wallet_expired_secret_id_raises(temp_db, stub_keyring):
+    from src.services.wallet_manager import import_wallet
+    from src.shared.errors import SigningError
+
+    with pytest.raises(SigningError, match="unknown or has expired"):
+        import_wallet(secret_id="bogus-id-that-was-never-stashed")
+
+
+def test_reveal_wallet_secret_roundtrip(temp_db, stub_keyring, mock_sdk_create):
+    """reveal_wallet_secret decrypts from DB — used by the reveal-by-address CLI."""
+    from src.services.wallet_manager import create_wallet, reveal_wallet_secret
+
+    create_wallet(chain="evm", network="testnet", chain_id=84532)
+    result = reveal_wallet_secret(_TEST_ADDRESS)
+    assert result.secret == _TEST_PRIVKEY
+    assert result.address == _TEST_ADDRESS
+
+
+# -- Backup gate (phase-2 contract: live trading refuses on unconfirmed wallets) -
+
+
+def test_require_backup_confirmed_null_raises(temp_db, stub_keyring, mock_sdk_create):
+    from src.services.wallet_manager import create_wallet, require_backup_confirmed
+    from src.shared.errors import SigningError
+
+    create_wallet(chain="evm", network="testnet", chain_id=84532)
+    # Fresh wallet, no backup confirmation → must raise.
+    with pytest.raises(SigningError, match="not backed up"):
+        require_backup_confirmed(_TEST_ADDRESS)
+
+
+def test_confirm_backup_unlocks(temp_db, stub_keyring, mock_sdk_create):
+    from src.services.wallet_manager import (
+        confirm_backup,
+        create_wallet,
+        require_backup_confirmed,
+    )
+
+    create_wallet(chain="evm", network="testnet", chain_id=84532)
+    item = confirm_backup(_TEST_ADDRESS)
+    assert item.backup_confirmed_at is not None
+    # After confirmation, the gate is open.
+    require_backup_confirmed(_TEST_ADDRESS)  # must not raise
+
+
+def test_confirm_backup_unknown_wallet_raises(temp_db, stub_keyring):
+    from src.services.wallet_manager import confirm_backup
+    from src.shared.errors import WalletNotFound
+
+    with pytest.raises(WalletNotFound):
+        confirm_backup("0x" + "99" * 20)
+
+
+# -- Fernet keyfile + guard (phase-1 contract: never silently regenerate) ------
+
+
+def test_fernet_never_silently_regenerates_with_stubbed_keyring(tmp_path, monkeypatch):
+    """If a keyfile exists, fernet MUST return that key, not generate a new one."""
+    from cryptography.fernet import Fernet
+
+    from src.config import app_config
+    from src.shared.crypto import fernet as f
+
+    # Write a known keyfile.
+    key_path = tmp_path / "master.key"
+    known_key = Fernet.generate_key()
+    key_path.write_bytes(known_key)
+    key_path.chmod(0o600)
+
+    monkeypatch.setattr(app_config, "MASTER_KEY_PATH", str(key_path))
+    f.reset_master_key_cache()
+
+    assert f.get_master_key() == known_key
+    assert f.get_master_key_source() == "keyfile"
+
+    f.reset_master_key_cache()

@@ -41,6 +41,8 @@ def get_connection() -> sqlite3.Connection:
     get an in-memory database (single connection, single-session scope).
     """
     path = _db_path()
+    if path != ":memory:":
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
     # check_same_thread=False so APScheduler threads can read/write.
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row

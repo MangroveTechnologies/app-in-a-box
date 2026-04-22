@@ -1,22 +1,38 @@
 ---
 name: onboard
 description: >-
-  Use on first session in a fresh app-in-a-box repo. Guides the user through
-  project setup via conversation — learns what they're building, who they are,
-  and what kind of helper they want. The agent creates a persona for itself,
-  names itself, and becomes that helper for all future sessions. Populates
-  branding.json and the Project Context section of CLAUDE.md.
+  REBRAND PATH ONLY. Invoke ONLY when the user explicitly wants to rebrand
+  this template into a DIFFERENT project (not the default Mangrove trading
+  bot). Phrases that signal this: "I want to fork this template", "rebrand
+  this into my own app", "I'm building something else on top of this", or
+  the user types "/onboard" as an explicit slash command. NEVER auto-fire
+  on a fresh clone — fresh-clone users get the Stage 0 greeter in
+  .claude/rules/trading-bot-workflow.md instead. When invoked, guides the
+  user through project identity, creates an agent persona, and populates
+  branding.json + CLAUDE.md Project Context.
 ---
 
-# Onboarding
+# Onboarding (REBRAND PATH ONLY)
 
-Welcome the user to app-in-a-box. This skill runs once — on the first Claude session in a fresh repo.
+This skill transforms the trading-bot template into a different project. Use it only when the user has explicitly asked to rebrand or fork.
+
+**If the user is a trading-bot user (workshop attendee, operator running the bot that ships in this repo), DO NOT use this skill.** Their default path is the Stage 0 greeter in `.claude/rules/trading-bot-workflow.md`, which the SessionStart hook routes fresh clones to automatically.
+
+## When to invoke
+
+Only when the user explicitly says something like:
+- "I want to fork this template and build a different app"
+- "Help me rebrand this into a [non-trading-bot use case]"
+- "I'm using this as a scaffold for my own project"
+- Or the user types `/onboard` as an explicit slash command.
+
+If none of those have happened, do not invoke. Default to trading-bot mode.
 
 ## Detection
 
-The `SessionStart` hook (`/.claude/hooks/check-onboard.sh`) checks whether the **Project Context** section in `CLAUDE.md` has content. If it's empty, the hook injects a system reminder telling you to run this skill immediately.
+The `SessionStart` hook (`.claude/hooks/check-onboard.sh`) no longer auto-routes to this skill on fresh clones — it routes to the Stage 0 greeter. The marker file `.claude/.onboarded` is written by Phase 4 of this skill ONLY when a user has deliberately walked the rebrand flow, so fresh-clone users skip onboarding entirely.
 
-**You are onboarded when:** the Project Context section in CLAUDE.md contains the user's project info and your agent identity. If that section has content, do NOT re-run onboarding — just be yourself and pick up where you left off.
+**You are onboarded when:** `.claude/.onboarded` exists AND the Project Context section in CLAUDE.md contains user-supplied content. If both are true, do NOT re-run onboarding — just be yourself and pick up where you left off.
 
 ## Phase 1: Get to Know the User
 

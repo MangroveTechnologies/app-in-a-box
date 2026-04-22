@@ -376,12 +376,13 @@ def _register_signals(server: FastMCP) -> None:
         if search:
             from mangroveai.models import SearchSignalsRequest
             page = client.signals.search(SearchSignalsRequest(query=search, limit=limit))
+            items = [_dump(s) for s in getattr(page, "items", [])]
         else:
-            page = client.signals.list(limit=limit)
-        items = [_dump(s) for s in getattr(page, "items", [])]
+            all_signals = list(client.signals.list_iter(limit_per_page=min(limit, 100)))
+            items = [_dump(s) for s in all_signals[:limit]]
         if category:
             items = [s for s in items if (s.get("category") or "").lower() == category.lower()]
-        return json.dumps({"items": items, "total": getattr(page, "total", len(items))})
+        return json.dumps({"items": items, "total": len(items)})
 
     register_tool(ToolEntry(
         name="list_signals",

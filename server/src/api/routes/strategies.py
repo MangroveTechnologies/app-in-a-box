@@ -86,10 +86,38 @@ async def update_status(strategy_id: str, req: StrategyStatusUpdate) -> Strategy
 
 
 class BacktestInput(BaseModel):
+    """Parameters for POST /strategies/{id}/backtest.
+
+    Mirrors the MangroveAI BacktestRequest surface so this route and the
+    MCP tool pass through the same knobs a direct SDK or curl caller would
+    use. Only window-selection has special resolution; everything else is
+    pass-through to the server.
+
+    Lookback window resolution — first non-null group wins:
+      1. start_date + end_date (ISO 8601)
+      2. lookback_hours
+      3. lookback_days
+      4. lookback_months
+      5. timeframes.recommended_lookback_months(strategy.timeframe)
+         (5m/15m/30m/1h → 3 mo, 4h → 6 mo, 1d → 12 mo)
+    """
     mode: str = "full"  # quick | full
-    lookback_months: int = 3
+
+    # Window selection. Leave all null to get timeframe-aware defaults.
+    lookback_months: int | None = None
+    lookback_days: int | None = None
+    lookback_hours: int | None = None
     start_date: str | None = None
     end_date: str | None = None
+
+    # Optional server-side overrides (omit to use trading_defaults.json).
+    slippage_pct: float | None = None
+    fee_pct: float | None = None
+    max_hold_time_hours: int | None = None
+    # Free-form overrides merged into _DEFAULT_EXECUTION_CONFIG (e.g.
+    # initial_balance, max_risk_per_trade). Keys must match MangroveAI's
+    # BacktestRequest field names.
+    overrides: dict | None = None
 
 
 @router.post(
@@ -108,30 +136,55 @@ async def backtest(strategy_id: str, req: BacktestInput) -> dict:
         exit=detail.exit,
     )
     if req.mode == "quick":
+        # Quick mode is summary-only; it uses the bulk path which only
+        # understands lookback_months. If the caller passed finer
+        # granularity, translate it best-effort (days → months, hours
+        # too short to make sense in quick mode — fall through to
+        # timeframe-aware default).
+        months = req.lookback_months
+        if months is None and req.lookback_days:
+            months = max(1, req.lookback_days // 30)
         results = backtest_service.quick_backtest_all(
-            [candidate], lookback_months=req.lookback_months,
+            [candidate], lookback_months=months,
         )
         result = results[0]
     else:
         result = backtest_service.full_backtest(
             candidate,
             lookback_months=req.lookback_months,
+            lookback_days=req.lookback_days,
+            lookback_hours=req.lookback_hours,
             start_date=req.start_date,
             end_date=req.end_date,
+            slippage_pct=req.slippage_pct,
+            fee_pct=req.fee_pct,
+            max_hold_time_hours=req.max_hold_time_hours,
+            overrides=req.overrides,
         )
+
+    # Pass through the FULL metrics dict from the SDK, not a hand-picked
+    # subset. Keeps this route aligned with what a direct curl or SDK
+    # call would return and surfaces upstream metrics (sortino, calmar,
+    # profit_factor, etc.) we can't anticipate here.
+    full_metrics: dict = dict(result.raw_metrics) if result.raw_metrics else {}
+    # Stable top-level aliases for existing callers + generation_report
+    # schema. Overwrite whatever shape came from the server to keep
+    # callers simple.
+    full_metrics.update({
+        "irr_annualized": result.irr_annualized,
+        "win_rate": result.win_rate,
+        "total_trades": result.total_trades,
+        "sharpe_ratio": result.sharpe_ratio,
+        "max_drawdown": result.max_drawdown,
+        "net_pnl": result.net_pnl,
+    })
 
     return {
         "strategy_id": strategy_id,
         "mode": req.mode,
-        "metrics": {
-            "irr_annualized": result.irr_annualized,
-            "win_rate": result.win_rate,
-            "total_trades": result.total_trades,
-            "sharpe_ratio": result.sharpe_ratio,
-            "max_drawdown": result.max_drawdown,
-            "net_pnl": result.net_pnl,
-        },
+        "metrics": full_metrics,
         "trade_history": result.raw_metrics.get("trade_history") if req.mode == "full" else None,
+        "resolved_window": result.raw_metrics.get("resolved_window"),
         "success": result.success,
         "error": result.error,
     }

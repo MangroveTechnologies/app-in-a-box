@@ -17,6 +17,7 @@ vary. We look up several common spellings and return 0.0 if none present.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from mangroveai.models import BacktestRequest
@@ -24,11 +25,56 @@ from pydantic import BaseModel
 
 from src.config import app_config
 from src.services.candidate_generator import StrategyCandidate
+from src.shared import timeframes
 from src.shared.clients.mangrove import mangroveai_client
 from src.shared.errors import SdkError
 from src.shared.logging import get_logger
 
 _log = get_logger(__name__)
+
+
+def _resolve_window(
+    timeframe: str,
+    lookback_months: int | None,
+    lookback_days: int | None = None,
+    lookback_hours: int | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> tuple[int | None, str | None, str | None]:
+    """Resolve a lookback specification to (lookback_months, start_date, end_date).
+
+    Precedence (most specific first):
+      1. explicit start_date + end_date (pass-through)
+      2. lookback_hours (converted to pinned ISO window ending now)
+      3. lookback_days (same)
+      4. lookback_months (pass-through — server converts using 30d/month)
+      5. if none given, recommended by timeframe via
+         `timeframes.recommended_lookback_months`
+
+    Returns a tuple where the lookback_months entry is ``None`` whenever
+    explicit dates are returned (matches BacktestRequest's "dates take
+    precedence over lookback_months" contract).
+    """
+    # 1. pass-through for explicit dates
+    if start_date and end_date:
+        return None, start_date, end_date
+
+    # 2/3. hours and days → compute ISO window ending now (UTC)
+    if lookback_hours is not None and lookback_hours > 0:
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(hours=lookback_hours)
+        return None, start.isoformat(), end.isoformat()
+    if lookback_days is not None and lookback_days > 0:
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(days=lookback_days)
+        return None, start.isoformat(), end.isoformat()
+
+    # 4. explicit months
+    if lookback_months is not None and lookback_months > 0:
+        return lookback_months, start_date, end_date
+
+    # 5. auto by timeframe (matches MangroveAI prompt_builder.py defaults)
+    return timeframes.recommended_lookback_months(timeframe), start_date, end_date
 
 
 # Reasonable defaults for an autonomous backtest. These match the defaults
@@ -90,26 +136,53 @@ def _int_metric(metrics: dict[str, Any] | None, *keys: str, default: int = 0) ->
 
 def _build_request(
     candidate: StrategyCandidate,
-    lookback_months: int,
+    lookback_months: int | None,
     start_date: str | None = None,
     end_date: str | None = None,
+    overrides: dict[str, Any] | None = None,
+    slippage_pct: float | None = None,
+    fee_pct: float | None = None,
+    max_hold_time_hours: int | None = None,
 ) -> BacktestRequest:
-    """Build a BacktestRequest from a candidate + sensible defaults."""
+    """Build a BacktestRequest from a candidate + sensible defaults.
+
+    `overrides` is a dict that gets merged over `_DEFAULT_EXECUTION_CONFIG`
+    (account + risk fields). This is the escape hatch for callers who
+    want to tune initial_balance, max_risk_per_trade, etc. without us
+    adding each one as a first-class parameter.
+    """
+    # Always validate the candidate's timeframe — prevents 1m / other
+    # unsupported values from reaching the backend and being silently
+    # coerced to 1h.
+    interval = timeframes.canonicalize_timeframe(candidate.timeframe)
+
+    config = {**_DEFAULT_EXECUTION_CONFIG, **(overrides or {})}
+
     strategy_json = json.dumps({
         "name": candidate.name,
         "asset": candidate.asset,
         "entry": candidate.entry,
         "exit": candidate.exit or [],
     })
-    return BacktestRequest(
-        asset=candidate.asset,
-        interval=candidate.timeframe,
-        strategy_json=strategy_json,
-        **_DEFAULT_EXECUTION_CONFIG,
-        lookback_months=lookback_months if not start_date else None,
-        start_date=start_date,
-        end_date=end_date,
-    )
+    kwargs: dict[str, Any] = {
+        "asset": candidate.asset,
+        "interval": interval,
+        "strategy_json": strategy_json,
+        **config,
+        "lookback_months": lookback_months if not start_date else None,
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+    # Optional pass-through fields — only include when caller provided them
+    # so we don't clobber server defaults (trading_defaults.json).
+    if slippage_pct is not None:
+        kwargs["slippage_pct"] = slippage_pct
+    if fee_pct is not None:
+        kwargs["fee_pct"] = fee_pct
+    if max_hold_time_hours is not None:
+        kwargs["max_hold_time_hours"] = max_hold_time_hours
+
+    return BacktestRequest(**kwargs)
 
 
 def _summarize(
@@ -144,7 +217,16 @@ def quick_backtest_all(
 ) -> list[CandidateBacktestResult]:
     """Run a backtest for every candidate. Per-candidate failures do not
     abort the batch — the result's .success and .error fields carry the
-    outcome."""
+    outcome.
+
+    If `lookback_months` is None, picks the timeframe-aware recommended
+    default per `timeframes.recommended_lookback_months`. All candidates
+    are assumed to share the same timeframe (they come from one
+    candidate_generator.generate() call), so the first one drives the
+    recommendation.
+    """
+    if lookback_months is None and candidates:
+        lookback_months = timeframes.recommended_lookback_months(candidates[0].timeframe)
     if lookback_months is None:
         lookback_months = int(app_config.BACKTEST_DEFAULT_LOOKBACK_MONTHS)
 
@@ -215,18 +297,50 @@ def filter_and_rank(
 def full_backtest(
     candidate: StrategyCandidate,
     lookback_months: int | None = None,
+    lookback_days: int | None = None,
+    lookback_hours: int | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
+    slippage_pct: float | None = None,
+    fee_pct: float | None = None,
+    max_hold_time_hours: int | None = None,
+    overrides: dict[str, Any] | None = None,
 ) -> CandidateBacktestResult:
     """Run a full backtest — same SDK call as quick, but we also return
-    the trade_history attached to raw_metrics for downstream display."""
-    if lookback_months is None:
-        lookback_months = int(app_config.BACKTEST_DEFAULT_LOOKBACK_MONTHS)
+    the trade_history attached to raw_metrics for downstream display.
+
+    Lookback resolution (first non-null wins):
+      start_date+end_date > lookback_hours > lookback_days > lookback_months
+      > timeframes.recommended_lookback_months(candidate.timeframe).
+
+    `overrides` merges over `_DEFAULT_EXECUTION_CONFIG` for advanced
+    callers who want to tune initial_balance, max_risk_per_trade, etc.
+    slippage_pct / fee_pct / max_hold_time_hours are pass-through to the
+    SDK's BacktestRequest fields of the same name — omit to use the
+    server's trading_defaults.json values.
+    """
+    resolved_months, resolved_start, resolved_end = _resolve_window(
+        candidate.timeframe,
+        lookback_months,
+        lookback_days=lookback_days,
+        lookback_hours=lookback_hours,
+        start_date=start_date,
+        end_date=end_date,
+    )
 
     client = mangroveai_client()
     try:
         raw = client.backtesting.run(
-            _build_request(candidate, lookback_months, start_date, end_date),
+            _build_request(
+                candidate,
+                lookback_months=resolved_months,
+                start_date=resolved_start,
+                end_date=resolved_end,
+                overrides=overrides,
+                slippage_pct=slippage_pct,
+                fee_pct=fee_pct,
+                max_hold_time_hours=max_hold_time_hours,
+            ),
         )
     except Exception as e:  # noqa: BLE001
         raise SdkError(
@@ -240,6 +354,17 @@ def full_backtest(
     trade_history = getattr(raw, "trade_history", None)
     if trade_history is not None:
         summary.raw_metrics = {**summary.raw_metrics, "trade_history": trade_history}
+    # Record the resolved window so downstream callers can surface it to
+    # the user (and detect fallbacks from the server).
+    summary.raw_metrics = {
+        **summary.raw_metrics,
+        "resolved_window": {
+            "lookback_months": resolved_months,
+            "start_date": resolved_start,
+            "end_date": resolved_end,
+            "requested_timeframe": candidate.timeframe,
+        },
+    }
 
     _log.info(
         "backtest.full_completed",
@@ -247,5 +372,8 @@ def full_backtest(
         irr=summary.irr_annualized,
         win_rate=summary.win_rate,
         total_trades=summary.total_trades,
+        resolved_months=resolved_months,
+        resolved_start=resolved_start,
+        resolved_end=resolved_end,
     )
     return summary

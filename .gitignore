@@ -48,6 +48,11 @@ docker-compose.override.yml
 # intentionally NOT committed -- each clone re-onboards on first run.
 .claude/.onboarded
 
+# Claude Code MCP registration. Written by scripts/setup-mcp.sh into the
+# user's ~/.claude.json (user scope) and also as a convenience copy at
+# the repo root. Per-user state — never committed.
+.mcp.json
+
 # Internal docs (not for public repo)
 TEMPLATE-REVIEW.md
 ROADMAP.md

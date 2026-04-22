@@ -11,6 +11,28 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/block-wallet-secrets.sh --mode user",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/block-wallet-secrets.sh --mode tool",
+            "timeout": 3
+          }
+        ]
+      }
     ]
   }
 }

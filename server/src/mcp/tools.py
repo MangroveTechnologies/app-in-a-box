@@ -284,24 +284,37 @@ def _register_dex(server: FastMCP) -> None:
     async def get_swap_quote(
         input_token: str, output_token: str, amount: float,
         chain_id: int, venue_id: str | None = None,
+        mode: str | None = None,
         api_key: str = "",
     ) -> str:
-        """Get a swap quote."""
+        """Get a DEX swap quote.
+
+        Mirrors `mangrovemarkets.dex.get_quote(input_token, output_token,
+        amount, venue_id, chain_id, mode)`. `mode` is an optional
+        routing hint recognized by some venues (e.g. 1inch supports
+        modes that bias for gas-cost vs price-improvement).
+        """
         if not _require(api_key):
             return _auth_error()
         try:
             from src.shared.clients.mangrove import mangrovemarkets_client
-            q = mangrovemarkets_client().dex.get_quote(
-                input_token=input_token, output_token=output_token,
-                amount=amount, chain_id=chain_id, venue_id=venue_id,
-            )
+            kwargs: dict[str, Any] = {
+                "input_token": input_token,
+                "output_token": output_token,
+                "amount": amount,
+                "chain_id": chain_id,
+                "venue_id": venue_id,
+            }
+            if mode is not None:
+                kwargs["mode"] = mode
+            q = mangrovemarkets_client().dex.get_quote(**kwargs)
             return json.dumps(_dump(q))
         except AgentError as e:
             return _handle_agent_error(e)
 
     register_tool(ToolEntry(
         name="get_swap_quote",
-        description="Get a DEX swap quote.",
+        description="Get a DEX swap quote. Optionally pin a venue + mode.",
         access="auth",
         parameters=[
             ToolParam(name="input_token", type="string", required=True, description="Input token"),
@@ -309,6 +322,7 @@ def _register_dex(server: FastMCP) -> None:
             ToolParam(name="amount", type="number", required=True, description="Input amount"),
             ToolParam(name="chain_id", type="integer", required=True, description="EVM chain id"),
             ToolParam(name="venue_id", type="string", required=False, description="Optional specific venue"),
+            ToolParam(name="mode", type="string", required=False, description="Optional routing hint (venue-specific)"),
             _APIKEY,
         ],
     ))
@@ -316,13 +330,22 @@ def _register_dex(server: FastMCP) -> None:
     @server.tool()
     async def execute_swap(
         input_token: str, output_token: str, amount: float,
-        chain_id: int, wallet_address: str,
-        slippage: float = 1.0, venue_id: str | None = None,
+        chain_id: int, wallet_address: str, slippage_pct: float,
+        venue_id: str | None = None,
         confirm: bool = False,
         api_key: str = "",
     ) -> str:
-        """Execute a swap. Requires confirm=true. Full 6-step flow with
-        client-side signing; SDK never sees keys."""
+        """Execute a swap. Requires confirm=true + explicit slippage_pct.
+
+        Full 6-step flow with client-side signing; SDK never sees keys.
+
+        `slippage_pct` is REQUIRED and specified as a DECIMAL
+        (0.005 = 0.5%, 0.01 = 1%, 0.02 = 2%). No default — picking
+        a slippage tolerance is a risk decision the user must make
+        explicitly for live trades. Converted to the upstream
+        percentage convention (multiplied by 100) at the
+        `dex.prepare_swap()` boundary.
+        """
         if not _require(api_key):
             return _auth_error()
         try:
@@ -340,7 +363,8 @@ def _register_dex(server: FastMCP) -> None:
                                  amount=amount, reason="user-initiated")
             trade = execute_one(intent, mode="live",
                                 wallet_address=wallet_address,
-                                chain_id=chain_id, venue_id=venue_id)
+                                chain_id=chain_id, venue_id=venue_id,
+                                slippage_pct=slippage_pct)
             return json.dumps({
                 "tx_hash": trade.tx_hash, "status": trade.status,
                 "input_token": trade.input_token, "input_amount": trade.input_amount,
@@ -353,7 +377,12 @@ def _register_dex(server: FastMCP) -> None:
 
     register_tool(ToolEntry(
         name="execute_swap",
-        description="Execute a DEX swap (requires confirm=true). Single code path shared with cron-driven trades.",
+        description=(
+            "Execute a DEX swap (requires confirm=true + explicit "
+            "slippage_pct). Single code path shared with cron-driven "
+            "trades. Slippage is always user-specified — no default — "
+            "because picking a tolerance is a risk decision."
+        ),
         access="auth",
         parameters=[
             ToolParam(name="input_token", type="string", required=True, description="Input token"),
@@ -361,7 +390,7 @@ def _register_dex(server: FastMCP) -> None:
             ToolParam(name="amount", type="number", required=True, description="Input amount"),
             ToolParam(name="chain_id", type="integer", required=True, description="EVM chain id"),
             ToolParam(name="wallet_address", type="string", required=True, description="Wallet from local store"),
-            ToolParam(name="slippage", type="number", required=False, description="Slippage % (default 1.0)"),
+            ToolParam(name="slippage_pct", type="number", required=True, description="Slippage tolerance as DECIMAL (0.005 = 0.5%, 0.01 = 1%). No default — user must choose."),
             ToolParam(name="venue_id", type="string", required=False, description="Optional specific venue"),
             ToolParam(name="confirm", type="boolean", required=True, description="Must be true"),
             _APIKEY,
@@ -415,19 +444,30 @@ def _register_market(server: FastMCP) -> None:
     ))
 
     @server.tool()
-    async def get_market_data(symbol: str, api_key: str = "") -> str:
-        """Current market data for an asset."""
+    async def get_market_data(
+        symbol: str, provider: str | None = None, api_key: str = "",
+    ) -> str:
+        """Current market data for an asset.
+
+        Thin wrapper over `mangroveai.crypto_assets.get_market_data(symbol,
+        *, provider)`. `provider` selects a specific data source; omit to
+        use the SDK default.
+        """
         if not _require(api_key):
             return _auth_error()
         from src.shared.clients.mangrove import mangroveai_client
-        return json.dumps(_dump(mangroveai_client().crypto_assets.get_market_data(symbol)))
+        kwargs: dict[str, Any] = {"symbol": symbol}
+        if provider is not None:
+            kwargs["provider"] = provider
+        return json.dumps(_dump(mangroveai_client().crypto_assets.get_market_data(**kwargs)))
 
     register_tool(ToolEntry(
         name="get_market_data",
-        description="Current price, market cap, volume, 24h/7d change.",
+        description="Current price, market cap, volume, 24h/7d change. Optionally pin a provider.",
         access="auth",
         parameters=[
             ToolParam(name="symbol", type="string", required=True, description="Asset symbol"),
+            ToolParam(name="provider", type="string", required=False, description="Optional data provider override"),
             _APIKEY,
         ],
     ))

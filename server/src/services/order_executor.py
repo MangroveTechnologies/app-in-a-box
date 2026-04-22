@@ -135,17 +135,34 @@ def _live_swap(
     wallet_address: str,
     chain_id: int | None = None,
     venue_id: str | None = None,
+    slippage_pct: float | None = None,
 ) -> Trade:
     """Execute the full 6-step live swap flow.
 
     The SDK never receives the private key — signing happens locally via
     wallet_manager.sign(). The SDK sees unsigned tx payloads + signed tx
     hex strings.
+
+    `slippage_pct` is the user's tolerance as a DECIMAL (0.005 = 0.5%,
+    0.01 = 1%). Converted to the upstream's percentage convention
+    (1.0 = 1%) at the `dex.prepare_swap()` boundary. If None, falls back
+    to 0.01 (1%) with a log warning — cron-driven swaps hit this path
+    until slippage_pct is added to the allocation schema.
     """
     if chain_id is None:
         raise SigningError(
             "chain_id is required for live swaps.",
             suggestion="Pass chain_id in the OrderIntent metadata or strategy config.",
+        )
+
+    if slippage_pct is None:
+        slippage_pct = 0.01
+        _log.warning(
+            "order.slippage_fallback",
+            strategy_id=strategy_id,
+            symbol=intent.symbol,
+            fallback_pct=slippage_pct,
+            note="slippage_pct not supplied; using 1% fallback. Add slippage_pct to the allocation block to silence this.",
         )
 
     client = mangrovemarkets_client()
@@ -216,10 +233,17 @@ def _live_swap(
                 )
 
     # 4. Prepare swap
+    # Upstream `dex.prepare_swap` takes slippage as a PERCENTAGE
+    # (1.0 = 1%, documented in MangroveMarkets-MCP-Server/src/dex/tools.py).
+    # Our API convention is DECIMAL (0.005 = 0.5%) to match the rest of
+    # the trading stack (trading_defaults.backtest_defaults.slippage_pct
+    # = 0.004 = 0.4%). Convert at the boundary.
+    sdk_slippage = slippage_pct * 100.0
     try:
         swap_tx = client.dex.prepare_swap(
             quote_id=quote.quote_id,
             wallet_address=wallet_address,
+            slippage=sdk_slippage,
         )
     except Exception as e:  # noqa: BLE001
         raise SdkError(f"dex.prepare_swap failed: {e}") from e
@@ -271,8 +295,14 @@ def execute_one(
     wallet_address: str | None = None,
     chain_id: int | None = None,
     venue_id: str | None = None,
+    slippage_pct: float | None = None,
 ) -> Trade:
     """Execute a single OrderIntent.
+
+    `slippage_pct` is a DECIMAL (0.005 = 0.5%). User-initiated swaps
+    require it (enforced at the MCP / REST boundary). Cron callers may
+    pass None — _live_swap falls back to 1% with a log warning until
+    the allocation schema carries slippage_pct (future work).
 
     strategy_id defaults to "user-initiated" for /dex/swap-style callers;
     cron-driven callers pass the real strategy UUID.
@@ -298,6 +328,7 @@ def execute_one(
             wallet_address=wallet_address,
             chain_id=chain_id,
             venue_id=venue_id,
+            slippage_pct=slippage_pct,
         )
     raise SigningError(f"Unknown mode: {mode}")
 
@@ -310,6 +341,7 @@ def execute_many(
     wallet_address: str | None = None,
     chain_id: int | None = None,
     venue_id: str | None = None,
+    slippage_pct: float | None = None,
 ) -> list[Trade]:
     """Execute N intents in order. Failures on one do not abort the batch.
 
@@ -329,6 +361,7 @@ def execute_many(
                 wallet_address=wallet_address,
                 chain_id=chain_id,
                 venue_id=venue_id,
+                slippage_pct=slippage_pct,
             )
             results.append(t)
         except Exception as e:  # noqa: BLE001

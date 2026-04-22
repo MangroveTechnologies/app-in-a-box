@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from mangroveai.models import BacktestRequest
@@ -31,6 +32,60 @@ from src.shared.errors import SdkError
 from src.shared.logging import get_logger
 
 _log = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Canonical trading defaults — copied verbatim from MangroveAI.
+#
+# Source: MangroveAI/domains/ai_copilot/prompts/trading_defaults.json
+# Loaded the way MangroveAI/domains/strategies/services.py does:
+# flatten risk_management + position_limits + volatility_settings +
+# trading_rules + time_based_exits into a single dict.
+#
+# The SDK's BacktestRequest declares 13 fields as required (pydantic
+# PydanticUndefined default) despite the server applying trading_defaults
+# fallback on its own. Until MangroveAI issue #437 lands (make those 10
+# duplicate-forcing fields Optional), every client has to supply the
+# values. We read from our copy of the upstream JSON so the values stay
+# in sync — `git diff server/src/services/data/trading_defaults.json`
+# against the upstream file is the drift check.
+# ---------------------------------------------------------------------------
+
+_DATA_DIR = Path(__file__).parent / "data"
+_TRADING_DEFAULTS_PATH = _DATA_DIR / "trading_defaults.json"
+
+with _TRADING_DEFAULTS_PATH.open() as _f:
+    TRADING_DEFAULTS: dict[str, Any] = json.load(_f)
+
+
+def flattened_defaults() -> dict[str, Any]:
+    """Flatten the trading_defaults sections into a single dict.
+
+    Mirrors MangroveAI/domains/strategies/services.py:306-309 — the same
+    sections in the same order, so a config override that works against
+    the upstream copilot works identically here.
+    """
+    out: dict[str, Any] = {}
+    for section in (
+        "risk_management",
+        "position_limits",
+        "volatility_settings",
+        "trading_rules",
+        "time_based_exits",
+    ):
+        section_data = TRADING_DEFAULTS.get(section) or {}
+        out.update(section_data)
+    return out
+
+
+def backtest_cost_defaults() -> dict[str, Any]:
+    """Return the slippage_pct / fee_pct defaults.
+
+    These live under `backtest_defaults` in the upstream JSON (separate
+    from the execution config sections) so they need a dedicated
+    accessor when a caller wants to surface them.
+    """
+    return dict(TRADING_DEFAULTS.get("backtest_defaults") or {})
 
 
 def _resolve_window(
@@ -77,20 +132,10 @@ def _resolve_window(
     return timeframes.recommended_lookback_months(timeframe), start_date, end_date
 
 
-# Reasonable defaults for an autonomous backtest. These match the defaults
-# the strategy spec uses; advanced users can override via the manual path.
-_DEFAULT_EXECUTION_CONFIG = {
-    "initial_balance": 10_000.0,
-    "min_balance_threshold": 0.1,
-    "min_trade_amount": 25.0,
-    "max_open_positions": 3,
-    "max_trades_per_day": 10,
-    "max_risk_per_trade": 0.02,
-    "max_units_per_trade": 1_000_000.0,
-    "max_trade_amount": 10_000_000.0,
-    "volatility_window": 24,
-    "target_volatility": 0.1,
-}
+# `_DEFAULT_EXECUTION_CONFIG` removed — use `flattened_defaults()` + caller override.
+# The old hardcoded dict had drifted from upstream trading_defaults.json
+# (max_risk_per_trade 0.02 vs 0.01, max_open_positions 3 vs 10,
+# max_trades_per_day 10 vs 50). Single source of truth now.
 
 
 class CandidateBacktestResult(BaseModel):
@@ -139,24 +184,24 @@ def _build_request(
     lookback_months: int | None,
     start_date: str | None = None,
     end_date: str | None = None,
-    overrides: dict[str, Any] | None = None,
-    slippage_pct: float | None = None,
-    fee_pct: float | None = None,
-    max_hold_time_hours: int | None = None,
+    config: dict[str, Any] | None = None,
 ) -> BacktestRequest:
-    """Build a BacktestRequest from a candidate + sensible defaults.
+    """Build a BacktestRequest from a candidate + canonical trading defaults.
 
-    `overrides` is a dict that gets merged over `_DEFAULT_EXECUTION_CONFIG`
-    (account + risk fields). This is the escape hatch for callers who
-    want to tune initial_balance, max_risk_per_trade, etc. without us
-    adding each one as a first-class parameter.
+    `config` is merged over `flattened_defaults()` — the single source of
+    truth is `data/trading_defaults.json`. Any key a caller passes in
+    `config` wins. Keys the SDK doesn't recognize are forwarded anyway
+    (BacktestRequest has `model_config={'extra': 'allow'}`, verified
+    2026-04-22) — the server treats them as execution_config extras.
+
+    Slippage, fee, and max_hold_time_hours are just keys in `config`
+    now. Callers no longer need dedicated arguments for them.
     """
-    # Always validate the candidate's timeframe — prevents 1m / other
-    # unsupported values from reaching the backend and being silently
-    # coerced to 1h.
+    # Reject unsupported timeframes up front (1m etc.) — see
+    # src.shared.timeframes.canonicalize_timeframe for the whitelist.
     interval = timeframes.canonicalize_timeframe(candidate.timeframe)
 
-    config = {**_DEFAULT_EXECUTION_CONFIG, **(overrides or {})}
+    merged = {**flattened_defaults(), **(config or {})}
 
     strategy_json = json.dumps({
         "name": candidate.name,
@@ -168,20 +213,11 @@ def _build_request(
         "asset": candidate.asset,
         "interval": interval,
         "strategy_json": strategy_json,
-        **config,
+        **merged,
         "lookback_months": lookback_months if not start_date else None,
         "start_date": start_date,
         "end_date": end_date,
     }
-    # Optional pass-through fields — only include when caller provided them
-    # so we don't clobber server defaults (trading_defaults.json).
-    if slippage_pct is not None:
-        kwargs["slippage_pct"] = slippage_pct
-    if fee_pct is not None:
-        kwargs["fee_pct"] = fee_pct
-    if max_hold_time_hours is not None:
-        kwargs["max_hold_time_hours"] = max_hold_time_hours
-
     return BacktestRequest(**kwargs)
 
 
@@ -301,23 +337,22 @@ def full_backtest(
     lookback_hours: int | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
-    slippage_pct: float | None = None,
-    fee_pct: float | None = None,
-    max_hold_time_hours: int | None = None,
-    overrides: dict[str, Any] | None = None,
+    config: dict[str, Any] | None = None,
 ) -> CandidateBacktestResult:
-    """Run a full backtest — same SDK call as quick, but we also return
-    the trade_history attached to raw_metrics for downstream display.
+    """Run a full backtest — same SDK call as quick, plus trade_history
+    in raw_metrics for downstream display.
 
     Lookback resolution (first non-null wins):
       start_date+end_date > lookback_hours > lookback_days > lookback_months
       > timeframes.recommended_lookback_months(candidate.timeframe).
 
-    `overrides` merges over `_DEFAULT_EXECUTION_CONFIG` for advanced
-    callers who want to tune initial_balance, max_risk_per_trade, etc.
-    slippage_pct / fee_pct / max_hold_time_hours are pass-through to the
-    SDK's BacktestRequest fields of the same name — omit to use the
-    server's trading_defaults.json values.
+    `config` merges over the canonical `flattened_defaults()` from
+    `data/trading_defaults.json`. Any key goes: the upstream execution
+    knobs (initial_balance, max_risk_per_trade, atr_period, …), plus the
+    three BacktestRequest-level optionals (slippage_pct, fee_pct,
+    max_hold_time_hours), plus anything upstream adds later — the SDK
+    model is `extra='allow'`, so unknown keys round-trip to the server
+    without client-side error.
     """
     resolved_months, resolved_start, resolved_end = _resolve_window(
         candidate.timeframe,
@@ -336,10 +371,7 @@ def full_backtest(
                 lookback_months=resolved_months,
                 start_date=resolved_start,
                 end_date=resolved_end,
-                overrides=overrides,
-                slippage_pct=slippage_pct,
-                fee_pct=fee_pct,
-                max_hold_time_hours=max_hold_time_hours,
+                config=config,
             ),
         )
     except Exception as e:  # noqa: BLE001

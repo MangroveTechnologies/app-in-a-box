@@ -88,10 +88,10 @@ async def update_status(strategy_id: str, req: StrategyStatusUpdate) -> Strategy
 class BacktestInput(BaseModel):
     """Parameters for POST /strategies/{id}/backtest.
 
-    Mirrors the MangroveAI BacktestRequest surface so this route and the
-    MCP tool pass through the same knobs a direct SDK or curl caller would
-    use. Only window-selection has special resolution; everything else is
-    pass-through to the server.
+    Thin pass-through to MangroveAI's BacktestRequest. Only window-
+    selection has special resolution on our side; all other tuning
+    flows through a single `config` dict that merges over the canonical
+    `trading_defaults.json`.
 
     Lookback window resolution — first non-null group wins:
       1. start_date + end_date (ISO 8601)
@@ -100,6 +100,18 @@ class BacktestInput(BaseModel):
       4. lookback_months
       5. timeframes.recommended_lookback_months(strategy.timeframe)
          (5m/15m/30m/1h → 3 mo, 4h → 6 mo, 1d → 12 mo)
+
+    `config` accepts any BacktestRequest-compatible key:
+      - slippage_pct, fee_pct, max_hold_time_hours
+      - initial_balance, min_balance_threshold, min_trade_amount
+      - max_open_positions, max_trades_per_day, max_risk_per_trade
+      - max_units_per_trade, max_trade_amount
+      - volatility_window, target_volatility, volatility_mode,
+        enable_volatility_adjustment
+      - cooldown_bars, daily_momentum_limit, weekly_momentum_limit
+      - reward_factor, atr_period, atr_volatility_factor, ...
+    Any key here overrides the corresponding trading_defaults.json entry.
+    Unknown keys are forwarded as-is (SDK allows extras).
     """
     mode: str = "full"  # quick | full
 
@@ -110,14 +122,8 @@ class BacktestInput(BaseModel):
     start_date: str | None = None
     end_date: str | None = None
 
-    # Optional server-side overrides (omit to use trading_defaults.json).
-    slippage_pct: float | None = None
-    fee_pct: float | None = None
-    max_hold_time_hours: int | None = None
-    # Free-form overrides merged into _DEFAULT_EXECUTION_CONFIG (e.g.
-    # initial_balance, max_risk_per_trade). Keys must match MangroveAI's
-    # BacktestRequest field names.
-    overrides: dict | None = None
+    # Single escape hatch for tuning. Merges over trading_defaults.json.
+    config: dict | None = None
 
 
 @router.post(
@@ -156,10 +162,7 @@ async def backtest(strategy_id: str, req: BacktestInput) -> dict:
             lookback_hours=req.lookback_hours,
             start_date=req.start_date,
             end_date=req.end_date,
-            slippage_pct=req.slippage_pct,
-            fee_pct=req.fee_pct,
-            max_hold_time_hours=req.max_hold_time_hours,
-            overrides=req.overrides,
+            config=req.config,
         )
 
     # Pass through the FULL metrics dict from the SDK, not a hand-picked

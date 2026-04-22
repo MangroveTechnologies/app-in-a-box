@@ -1,17 +1,17 @@
 """Agent-native x402 payment over MCP — no human in the loop.
 
 Mirror of agent_pay_hello_mangrove.py (REST) for the MCP transport. Uses
-the stock x402.mcp.x402MCPClient, which automatically detects the
+the stock x402.mcp.x402MCPSession, which automatically detects the
 PAYMENT_REQUIRED response, signs an EIP-3009 authorization, and retries
-with payment attached — the same ergonomics as x402AsyncTransport on
-the REST side.
+with the payment attached via MCP _meta — the same ergonomics as
+x402AsyncTransport on the REST side.
 
 Requirements:
-    - Server running (default: http://127.0.0.1:8080)
-    - Server's hello_mangrove tool registered via x402.mcp.create_payment_wrapper
-      so the PAYMENT_REQUIRED shape matches what x402MCPClient extracts
-    - WALLET_SECRET env var with EVM private key funded on the active network
-      (~$0.05 USDC + a few cents of ETH for gas on Base mainnet)
+    - Server running (default: http://127.0.0.1:8080) with the hello_mangrove
+      tool registered via x402.mcp.create_payment_wrapper, so the 402 response
+      shape is what x402MCPSession expects
+    - WALLET_SECRET env var with an EVM private key funded on the active
+      network (~$0.05 USDC + a few cents of ETH for gas on Base mainnet)
 
 Usage:
     export WALLET_SECRET=0x...
@@ -22,7 +22,6 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import os
 import sys

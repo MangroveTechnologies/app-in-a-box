@@ -129,13 +129,14 @@ Once a wallet exists (either imported or created and confirmed-backed-up via `co
 
 ## Stage 2 — Author
 
-- Prefer `create_strategy_autonomous` with:
-  - `goal`: plain-English objective ("conservative ETH entry from USDC, trend-following, low churn")
-  - `asset`: symbol (e.g. `ETH`)
-  - `timeframe`: `"1h"` / `"4h"` / `"1d"`
-  - `candidate_count`: 5–10 (default 7)
-  - `backtest_lookback_months`: 3–6
-- Tell the user what you're doing: "Generating {N} candidate strategies, backtesting each over {M} months, picking the winner."
+Detailed authoring flow (reference-first, KB-grounded, autonomous fallback) lives in the **`/create-strategy` skill**. Load and follow that — it covers:
+
+- **Phase A** — `search_reference_strategies` first (always)
+- **Phase B** — `build_strategy_from_reference` when a reference matches (signals + params copied exactly)
+- **Phase C** — custom build with required `kb_search` citation per signal (no library-default params)
+- **Phase D** — `create_strategy_autonomous` only when the user says "pick for me"
+
+Never default to Phase D as the first move.
 
 ## Stage 3 — Review backtest
 

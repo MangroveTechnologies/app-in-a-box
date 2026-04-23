@@ -1883,6 +1883,116 @@ def _register_strategy(server: FastMCP) -> None:
     ))
 
     @server.tool()
+    async def list_account_positions(
+        account_id: str | None = None,
+        status: str | None = None,
+        skip: int = 0, limit: int = 100,
+        api_key: str = "",
+    ) -> str:
+        """List positions on MangroveAI's execution side.
+
+        Hits `mangroveai.execution.list_positions`. Note: our
+        architecture executes trades locally via order_executor and
+        writes to our own SQLite trades/evaluations — so our user's
+        strategies don't populate MangroveAI execution accounts
+        unless a strategy was authored through the MangroveAI copilot
+        path. This tool is exposed for completeness + cases where a
+        user has both app-in-a-box AND copilot-authored strategies.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangroveai_client
+            kwargs: dict[str, Any] = {"skip": skip, "limit": limit}
+            if account_id is not None:
+                kwargs["account_id"] = account_id
+            if status is not None:
+                kwargs["status"] = status
+            items = mangroveai_client().execution.list_positions(**kwargs)
+            return json.dumps([_dump(i) for i in items])
+        except Exception as e:  # noqa: BLE001
+            return _err("EXECUTION_POSITIONS_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="list_account_positions",
+        description="List positions on MangroveAI's execution side (copilot-authored strategies).",
+        access="auth",
+        parameters=[
+            ToolParam(name="account_id", type="string", required=False, description="Optional filter"),
+            ToolParam(name="status", type="string", required=False, description="Optional: open | closed | etc"),
+            ToolParam(name="skip", type="integer", required=False, description="Page offset"),
+            ToolParam(name="limit", type="integer", required=False, description="Page size"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_account_position(position_id: str, api_key: str = "") -> str:
+        """Fetch a single MangroveAI execution-side position by id."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangroveai_client
+            return json.dumps(_dump(mangroveai_client().execution.get_position(position_id)))
+        except Exception as e:  # noqa: BLE001
+            return _err("EXECUTION_POSITION_GET_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_account_position",
+        description="Fetch a single MangroveAI execution position.",
+        access="auth",
+        parameters=[
+            ToolParam(name="position_id", type="string", required=True, description="Position id"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def list_account_trades(
+        account_id: str | None = None,
+        asset: str | None = None,
+        outcome: str | None = None,
+        skip: int = 0, limit: int = 100,
+        api_key: str = "",
+    ) -> str:
+        """List trades on MangroveAI's execution side.
+
+        Distinct from our local `list_trades` (which covers every
+        DEX swap the agent executed, stored in our SQLite). This
+        hits MangroveAI's copilot-execution trade log — different
+        data source, different use case.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangroveai_client
+            kwargs: dict[str, Any] = {"skip": skip, "limit": limit}
+            if account_id is not None:
+                kwargs["account_id"] = account_id
+            if asset is not None:
+                kwargs["asset"] = asset
+            if outcome is not None:
+                kwargs["outcome"] = outcome
+            items = mangroveai_client().execution.list_trades(**kwargs)
+            return json.dumps([_dump(i) for i in items])
+        except Exception as e:  # noqa: BLE001
+            return _err("EXECUTION_TRADES_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="list_account_trades",
+        description="List trades on MangroveAI's execution side (copilot-authored strategies).",
+        access="auth",
+        parameters=[
+            ToolParam(name="account_id", type="string", required=False, description="Optional filter"),
+            ToolParam(name="asset", type="string", required=False, description="Optional asset filter"),
+            ToolParam(name="outcome", type="string", required=False, description="Optional outcome filter"),
+            ToolParam(name="skip", type="integer", required=False, description="Page offset"),
+            ToolParam(name="limit", type="integer", required=False, description="Page size"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
     async def delete_strategy(strategy_id: str, api_key: str = "") -> str:
         """Delete a strategy upstream on MangroveAI.
 

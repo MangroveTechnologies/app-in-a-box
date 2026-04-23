@@ -442,7 +442,17 @@ def _register_dex(server: FastMCP) -> None:
     async def get_token_info(
         chain_id: int, address: str, api_key: str = "",
     ) -> str:
-        """Look up token metadata (symbol, decimals, name) by contract address."""
+        """Look up token metadata (symbol, decimals, name) by contract address.
+
+        ⚠️ CURRENTLY BROKEN pending upstream SDK fix. The mangrovemarkets
+        SDK's TokenInfo pydantic model expects flat top-level fields
+        (address, symbol, name, decimals) but the server response nests
+        them under a `token` sub-dict. Every call returns
+        DEX_TOKEN_INFO_FAILED with a 4-validation-error message.
+        Tracked: https://github.com/MangroveTechnologies/MangroveMarkets-MCP-Server/issues/62
+        Fall back to kb_glossary_get or kb_search for token concept
+        lookups until this is fixed and the SDK version bumped.
+        """
         if not _require(api_key):
             return _auth_error()
         try:
@@ -456,7 +466,7 @@ def _register_dex(server: FastMCP) -> None:
 
     register_tool(ToolEntry(
         name="get_token_info",
-        description="Resolve token contract address → symbol/decimals/name.",
+        description="⚠️ BROKEN upstream (MangroveMarkets-MCP-Server#62). Use kb_glossary_get / kb_search for token concepts until SDK bump.",
         access="auth",
         parameters=[
             ToolParam(name="chain_id", type="integer", required=True, description="EVM chain id"),
@@ -469,7 +479,18 @@ def _register_dex(server: FastMCP) -> None:
     async def get_spot_price(
         chain_id: int, tokens: str, api_key: str = "",
     ) -> str:
-        """Current spot price for one or more tokens (comma-separated)."""
+        """Current spot price for one or more tokens.
+
+        `tokens` is a COMMA-SEPARATED LIST OF CONTRACT ADDRESSES.
+        Symbols are NOT accepted (upstream 1inch backend rejects
+        them with 400 Bad Request). Use get_token_info first if
+        you only have a symbol — though that tool is currently
+        broken (see its docstring). Workshop path: hardcode known
+        addresses (USDC on Base = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913,
+        WETH on Base = 0x4200000000000000000000000000000000000006).
+
+        Prices are returned as wei-denominated integers (string form).
+        """
         if not _require(api_key):
             return _auth_error()
         try:
@@ -496,9 +517,18 @@ def _register_dex(server: FastMCP) -> None:
     async def get_gas_price(chain_id: int, api_key: str = "") -> str:
         """Current gas price estimate for a chain.
 
-        Useful as a pre-flight check before a swap — estimate how much
-        the tx will cost before committing. Returns slow / standard /
-        fast tier estimates per the venue's oracle.
+        Pre-flight check before a swap. Returns a `GasPrice` payload
+        where the SDK's flat top-level fields (`low`, `medium`, `high`,
+        `base_fee`) are currently null; real values are nested under
+        the `gas` key:
+            gas.baseFee                      — current base fee in wei
+            gas.low.maxPriorityFeePerGas     — tip for slow tx
+            gas.low.maxFeePerGas             — total cap for slow tx
+            gas.medium.{maxPriorityFeePerGas,maxFeePerGas}
+            gas.high.{maxPriorityFeePerGas,maxFeePerGas}
+
+        To estimate total cost in ETH for a swap, multiply a chosen
+        tier's maxFeePerGas by the gas limit returned by a quote.
         """
         if not _require(api_key):
             return _auth_error()
@@ -1116,7 +1146,10 @@ def _register_kb(server: FastMCP) -> None:
         """Fetch a full KB document by slug.
 
         Use when kb_search surfaces a document and the agent needs the
-        full body (not just the search snippet).
+        full body (not just the search snippet). Real documents run
+        up to ~25k chars — use sparingly and cite specific sections.
+
+        Response field: body lives under `content` (not `body`).
         """
         if not _require(api_key):
             return _auth_error()
@@ -1144,7 +1177,14 @@ def _register_kb(server: FastMCP) -> None:
 
         Useful for the /create-strategy skill's Phase C: agent picks
         a signal from list_signals, then calls this to find the KB
-        docs explaining that indicator family (momentum, trend, etc).
+        docs explaining that indicator family.
+
+        Category values are TITLE-CASE. Known values (as of 2026-04-23,
+        70 indicators total):
+            "Patterns"   (27)   "Trend"       (15)
+            "Momentum"   (11)   "Volume"       (9)
+            "Volatility"  (5)   "Returns"      (3)
+        Lowercase (e.g. "momentum") returns empty.
         """
         if not _require(api_key):
             return _auth_error()

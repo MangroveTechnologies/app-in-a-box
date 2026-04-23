@@ -80,6 +80,10 @@ def register(server: FastMCP):
     _register_dex(server)
     _register_market(server)
     _register_signals(server)
+    _register_on_chain(server)
+    _register_defi(server)
+    _register_social(server)
+    _register_docs(server)
     _register_strategy(server)
     _register_logs(server)
     _register_kb(server)
@@ -1028,6 +1032,223 @@ def _register_signals(server: FastMCP) -> None:
             _APIKEY,
         ],
     ))
+
+
+# ---------------------------------------------------------------------------
+# On-chain intelligence (auth)
+# ---------------------------------------------------------------------------
+
+
+def _register_on_chain(server: FastMCP) -> None:
+    """Whale activity, smart-money sentiment, token holders, exchange flows.
+
+    These tools back the /create-strategy skill's "cite Mangrove
+    intelligence" rule — they provide the 'why now' evidence for a
+    candidate strategy.
+    """
+    from src.shared.clients.mangrove import mangroveai_client
+
+    @server.tool()
+    async def get_whale_activity(
+        symbol: str, hours_back: int = 24, api_key: str = "",
+    ) -> str:
+        """Whale buying/selling activity for an asset over the last N hours."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            r = mangroveai_client().on_chain.get_whale_activity(
+                symbol=symbol, hours_back=hours_back,
+            )
+            return json.dumps(_dump(r))
+        except Exception as e:  # noqa: BLE001
+            return _err("ONCHAIN_WHALE_ACTIVITY_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_whale_activity",
+        description="Whale buying/selling activity for an asset.",
+        access="auth",
+        parameters=[
+            ToolParam(name="symbol", type="string", required=True, description="Asset symbol (e.g. ETH)"),
+            ToolParam(name="hours_back", type="integer", required=False, description="Window (default 24)"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_whale_transactions(
+        symbol: str | None = None, min_value: float = 500_000,
+        hours_back: int = 24, api_key: str = "",
+    ) -> str:
+        """Individual whale transactions above min_value USD."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            kwargs: dict[str, Any] = {
+                "min_value": min_value, "hours_back": hours_back,
+            }
+            if symbol is not None:
+                kwargs["symbol"] = symbol
+            r = mangroveai_client().on_chain.get_whale_transactions(**kwargs)
+            return json.dumps(_dump(r))
+        except Exception as e:  # noqa: BLE001
+            return _err("ONCHAIN_WHALE_TXS_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_whale_transactions",
+        description="Whale transactions above a USD threshold.",
+        access="auth",
+        parameters=[
+            ToolParam(name="symbol", type="string", required=False, description="Optional filter by asset"),
+            ToolParam(name="min_value", type="number", required=False, description="Min USD value (default 500000)"),
+            ToolParam(name="hours_back", type="integer", required=False, description="Window (default 24)"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_smart_money_sentiment(
+        symbol: str, chain: str | None = None, api_key: str = "",
+    ) -> str:
+        """Smart-money wallet sentiment for an asset (bullish/bearish signal).
+
+        ⚠️ Upstream netflow data is currently unavailable for most
+        assets on ethereum — real calls return 404 RESOURCE_NOT_FOUND
+        with a clear 'No Smart Money netflow data found' message.
+        Tool wiring is correct; upstream data pipeline issue.
+        Pair this with get_whale_activity / get_exchange_flows while
+        the data source is being populated.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            kwargs: dict[str, Any] = {"symbol": symbol}
+            if chain is not None:
+                kwargs["chain"] = chain
+            r = mangroveai_client().on_chain.get_smart_money_sentiment(**kwargs)
+            return json.dumps(_dump(r))
+        except Exception as e:  # noqa: BLE001
+            return _err("ONCHAIN_SMART_MONEY_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_smart_money_sentiment",
+        description="Smart-money sentiment for an asset (aggregate of tracked wallets).",
+        access="auth",
+        parameters=[
+            ToolParam(name="symbol", type="string", required=True, description="Asset symbol"),
+            ToolParam(name="chain", type="string", required=False, description="Optional chain filter"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def screen_smart_money(
+        chains: list[str] | None = None, timeframe: str = "24h",
+        limit: int = 20, api_key: str = "",
+    ) -> str:
+        """Discover which assets smart money is currently accumulating."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            kwargs: dict[str, Any] = {"timeframe": timeframe, "limit": limit}
+            if chains is not None:
+                kwargs["chains"] = chains
+            r = mangroveai_client().on_chain.screen_smart_money(**kwargs)
+            return json.dumps(_dump(r))
+        except Exception as e:  # noqa: BLE001
+            return _err("ONCHAIN_SMART_MONEY_SCREEN_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="screen_smart_money",
+        description="Screen assets smart money is currently accumulating.",
+        access="auth",
+        parameters=[
+            ToolParam(name="chains", type="array", required=False, description="Optional list of chain names"),
+            ToolParam(name="timeframe", type="string", required=False, description="Lookback (default '24h')"),
+            ToolParam(name="limit", type="integer", required=False, description="Max results (default 20)"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_token_holders(symbol: str, api_key: str = "") -> str:
+        """Top holders + distribution metrics for a token."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            r = mangroveai_client().on_chain.get_token_holders(symbol=symbol)
+            return json.dumps(_dump(r))
+        except Exception as e:  # noqa: BLE001
+            return _err("ONCHAIN_HOLDERS_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_token_holders",
+        description="Top holders + distribution for a token.",
+        access="auth",
+        parameters=[
+            ToolParam(name="symbol", type="string", required=True, description="Asset symbol"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_exchange_flows(
+        symbol: str | None = None, hours_back: int = 24, api_key: str = "",
+    ) -> str:
+        """Net exchange inflows / outflows (risk-off vs risk-on proxy).
+
+        Inflows to exchanges ≈ selling pressure; outflows ≈ accumulation.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            kwargs: dict[str, Any] = {"hours_back": hours_back}
+            if symbol is not None:
+                kwargs["symbol"] = symbol
+            r = mangroveai_client().on_chain.get_exchange_flows(**kwargs)
+            return json.dumps(_dump(r))
+        except Exception as e:  # noqa: BLE001
+            return _err("ONCHAIN_EXCHANGE_FLOWS_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_exchange_flows",
+        description="Net exchange inflows/outflows (selling pressure vs accumulation).",
+        access="auth",
+        parameters=[
+            ToolParam(name="symbol", type="string", required=False, description="Optional filter by asset"),
+            ToolParam(name="hours_back", type="integer", required=False, description="Window (default 24)"),
+            _APIKEY,
+        ],
+    ))
+
+
+# ---------------------------------------------------------------------------
+# DeFi (auth)
+# ---------------------------------------------------------------------------
+
+
+def _register_defi(server: FastMCP) -> None:
+    """Placeholder — will be populated in the defi commit."""
+    pass
+
+
+# ---------------------------------------------------------------------------
+# Social (auth)
+# ---------------------------------------------------------------------------
+
+
+def _register_social(server: FastMCP) -> None:
+    """Placeholder — will be populated in the social commit."""
+    pass
+
+
+# ---------------------------------------------------------------------------
+# Docs (auth)
+# ---------------------------------------------------------------------------
+
+
+def _register_docs(server: FastMCP) -> None:
+    """Placeholder — will be populated in the docs commit."""
+    pass
 
 
 # ---------------------------------------------------------------------------

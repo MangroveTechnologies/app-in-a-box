@@ -889,6 +889,108 @@ def _register_market(server: FastMCP) -> None:
         ],
     ))
 
+    @server.tool()
+    async def get_trending(api_key: str = "") -> str:
+        """Current trending crypto assets.
+
+        Pass-through to `mangroveai.crypto_assets.get_trending()`.
+        Useful for "what's hot right now" quick-glance. No filters.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangroveai_client
+            return json.dumps(_dump(mangroveai_client().crypto_assets.get_trending()))
+        except Exception as e:  # noqa: BLE001
+            return _err("CRYPTO_TRENDING_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_trending",
+        description="Trending crypto assets right now.",
+        access="auth",
+        parameters=[_APIKEY],
+    ))
+
+    @server.tool()
+    async def list_approved_assets(
+        min_score: float | None = None, limit: int = 100,
+        api_key: str = "",
+    ) -> str:
+        """List approved-universe crypto assets (with optional min_score filter).
+
+        Defaults to approved_only=True (the safe workshop subset).
+        Workshop attendees use this to see what's tradeable.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangroveai_client
+            kwargs: dict[str, Any] = {"approved_only": True, "limit": limit}
+            if min_score is not None:
+                kwargs["min_score"] = min_score
+            items = mangroveai_client().crypto_assets.list(**kwargs)
+            return json.dumps([_dump(i) for i in items])
+        except Exception as e:  # noqa: BLE001
+            return _err("CRYPTO_LIST_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="list_approved_assets",
+        description="Approved crypto asset universe (agent-safe set).",
+        access="auth",
+        parameters=[
+            ToolParam(name="min_score", type="number", required=False, description="Optional quality threshold"),
+            ToolParam(name="limit", type="integer", required=False, description="Max results (default 100)"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_asset(symbol: str, api_key: str = "") -> str:
+        """Single-asset detail (score, approval state, metadata).
+
+        More focused than get_market_data — returns the MangroveAI
+        approval/score/categorization rather than price/volume.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangroveai_client
+            return json.dumps(_dump(mangroveai_client().crypto_assets.get(symbol)))
+        except Exception as e:  # noqa: BLE001
+            return _err("CRYPTO_GET_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_asset",
+        description="Single-asset metadata + score + approval state.",
+        access="auth",
+        parameters=[
+            ToolParam(name="symbol", type="string", required=True, description="Asset symbol (e.g. BTC, ETH)"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_global_market(api_key: str = "") -> str:
+        """Global market overview (total market cap, BTC dominance, 24h change).
+
+        Context tool — useful when the agent wants to ground a
+        "market regime" observation before recommending strategies.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangroveai_client
+            return json.dumps(_dump(mangroveai_client().crypto_assets.get_global_market()))
+        except Exception as e:  # noqa: BLE001
+            return _err("CRYPTO_GLOBAL_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_global_market",
+        description="Global market overview (total cap, BTC dominance, 24h change).",
+        access="auth",
+        parameters=[_APIKEY],
+    ))
+
 
 # ---------------------------------------------------------------------------
 # Signals (auth)

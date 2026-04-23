@@ -78,12 +78,17 @@ class SwapRequest(BaseModel):
     wallet_address: str
     slippage_pct: float = Field(
         ...,
+        gt=0,
+        le=0.0025,
         description=(
-            "Slippage tolerance as DECIMAL (0.005 = 0.5%, 0.01 = 1%). "
-            "REQUIRED — no default. Picking a tolerance is a risk "
-            "decision the user must make explicitly for live trades. "
-            "Converted to the upstream percentage convention at the "
-            "dex.prepare_swap() boundary."
+            "Slippage tolerance as DECIMAL. REQUIRED — no default. "
+            "Range: (0, 0.0025] — max 0.25%. Typical values: 0.001 "
+            "(0.1%), 0.002 (0.2%), 0.0025 (0.25% = cap). Anything "
+            "higher is refused to prevent rekt-on-illiquid-pair "
+            "execution. Picking a tolerance is a risk decision the "
+            "user must make explicitly for live trades. Converted "
+            "to the upstream percentage convention (multiplied by "
+            "100) at the dex.prepare_swap() boundary."
         ),
     )
     mev_protection: bool = False

@@ -127,7 +127,7 @@ def test_swap_requires_confirm(client):
         json={
             "input_token": "USDC", "output_token": "ETH", "amount": 100.0,
             "chain_id": 84532, "wallet_address": "0xabc",
-            "slippage_pct": 0.005, "confirm": False,
+            "slippage_pct": 0.002, "confirm": False,
         },
     )
     assert r.status_code == 400
@@ -152,6 +152,42 @@ def test_swap_requires_explicit_slippage(client):
     assert "slippage_pct" in missing_fields
 
 
+def test_swap_rejects_slippage_above_cap(client):
+    """slippage_pct cap is 0.0025 (0.25%) — anything higher is refused
+    at the API boundary to prevent rekt-on-illiquid-pair execution."""
+    r = client.post(
+        "/api/v1/agent/dex/swap",
+        headers=_auth(),
+        json={
+            "input_token": "USDC", "output_token": "ETH", "amount": 100.0,
+            "chain_id": 84532, "wallet_address": "0xabc",
+            "slippage_pct": 0.01, "confirm": True,  # 1%, over the 0.25% cap
+        },
+    )
+    assert r.status_code == 422
+    body = r.json()
+    errors = body.get("detail", [])
+    assert any(
+        e.get("loc", [None, None])[-1] == "slippage_pct"
+        and e.get("type") in ("less_than_equal", "greater_than")
+        for e in errors
+    ), f"expected cap rejection on slippage_pct; got {errors}"
+
+
+def test_swap_accepts_slippage_at_cap(client):
+    """Boundary: slippage_pct = 0.0025 (exactly the cap) is allowed."""
+    r = client.post(
+        "/api/v1/agent/dex/swap",
+        headers=_auth(),
+        json={
+            "input_token": "USDC", "output_token": "ETH", "amount": 100.0,
+            "chain_id": 84532, "wallet_address": "0xabc",
+            "slippage_pct": 0.0025, "confirm": True,
+        },
+    )
+    assert r.status_code == 200
+
+
 def test_swap_happy_path(client):
     r = client.post(
         "/api/v1/agent/dex/swap",
@@ -159,7 +195,7 @@ def test_swap_happy_path(client):
         json={
             "input_token": "USDC", "output_token": "ETH", "amount": 100.0,
             "chain_id": 84532, "wallet_address": "0xabc",
-            "slippage_pct": 0.005, "confirm": True,
+            "slippage_pct": 0.002, "confirm": True,
         },
     )
     assert r.status_code == 200

@@ -339,12 +339,13 @@ def _register_dex(server: FastMCP) -> None:
 
         Full 6-step flow with client-side signing; SDK never sees keys.
 
-        `slippage_pct` is REQUIRED and specified as a DECIMAL
-        (0.005 = 0.5%, 0.01 = 1%, 0.02 = 2%). No default — picking
-        a slippage tolerance is a risk decision the user must make
-        explicitly for live trades. Converted to the upstream
-        percentage convention (multiplied by 100) at the
-        `dex.prepare_swap()` boundary.
+        `slippage_pct` is REQUIRED and specified as a DECIMAL, capped
+        at 0.0025 (0.25%). Typical values: 0.001 (0.1%), 0.002 (0.2%),
+        0.0025 (0.25% = max). Higher values are refused to prevent
+        rekt-on-illiquid-pair execution. No default — picking a
+        slippage tolerance is a risk decision the user must make
+        explicitly. Converted to the upstream percentage convention
+        (multiplied by 100) at the `dex.prepare_swap()` boundary.
         """
         if not _require(api_key):
             return _auth_error()
@@ -390,7 +391,7 @@ def _register_dex(server: FastMCP) -> None:
             ToolParam(name="amount", type="number", required=True, description="Input amount"),
             ToolParam(name="chain_id", type="integer", required=True, description="EVM chain id"),
             ToolParam(name="wallet_address", type="string", required=True, description="Wallet from local store"),
-            ToolParam(name="slippage_pct", type="number", required=True, description="Slippage tolerance as DECIMAL (0.005 = 0.5%, 0.01 = 1%). No default — user must choose."),
+            ToolParam(name="slippage_pct", type="number", required=True, description="Slippage tolerance as DECIMAL, capped at 0.0025 (0.25%). Typical: 0.001 (0.1%), 0.002 (0.2%), 0.0025 (max). Higher values refused."),
             ToolParam(name="venue_id", type="string", required=False, description="Optional specific venue"),
             ToolParam(name="confirm", type="boolean", required=True, description="Must be true"),
             _APIKEY,

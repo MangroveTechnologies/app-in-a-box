@@ -40,6 +40,8 @@ def _row_to_allocation(r) -> Allocation:
         active=bool(r["active"]),
         created_at=datetime.fromisoformat(r["created_at"]),
         released_at=datetime.fromisoformat(r["released_at"]) if r["released_at"] else None,
+        # slippage_pct column added in migration 004; older rows may return None.
+        slippage_pct=(r["slippage_pct"] if "slippage_pct" in r.keys() else None),
     )
 
 
@@ -49,11 +51,18 @@ def record_allocation(
     token_address: str,
     token_symbol: str,
     amount: float,
+    slippage_pct: float | None = None,
 ) -> Allocation:
     """Record a new active allocation for a strategy.
 
     Validates the wallet exists and amount > 0. Does NOT check on-chain
     balance — that's the user's responsibility when they fund the wallet.
+
+    `slippage_pct` is DECIMAL (0.005 = 0.5%). Callers via
+    StrategyAllocationInput enforce the 0.0025 cap + required-ness at the
+    Pydantic layer; we accept None here only so pre-migration test fixtures
+    and legacy call sites don't break compilation. The tick / cron path
+    refuses to execute_many with a None slippage_pct.
     """
     if amount <= 0:
         raise AllocationInsufficient(
@@ -72,11 +81,11 @@ def record_allocation(
     conn.execute(
         """INSERT INTO allocations
            (id, strategy_id, wallet_address, token_address, token_symbol,
-            amount, active, created_at, released_at)
-           VALUES (?,?,?,?,?,?,1,?,NULL)""",
+            amount, active, created_at, released_at, slippage_pct)
+           VALUES (?,?,?,?,?,?,1,?,NULL,?)""",
         (
             alloc_id, strategy_id, wallet_address, token_address,
-            token_symbol, amount, created_at.isoformat(),
+            token_symbol, amount, created_at.isoformat(), slippage_pct,
         ),
     )
     conn.commit()
@@ -88,6 +97,7 @@ def record_allocation(
         wallet_address=wallet_address,
         token_symbol=token_symbol,
         amount=amount,
+        slippage_pct=slippage_pct,
     )
 
     return Allocation(
@@ -100,6 +110,7 @@ def record_allocation(
         active=True,
         created_at=created_at,
         released_at=None,
+        slippage_pct=slippage_pct,
     )
 
 

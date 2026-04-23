@@ -124,17 +124,56 @@ Autonomous is the "I don't care, you decide" escape hatch. It's NOT the primary 
 
 Under no circumstances go straight to Phase D as the first move. Always try Phase A first.
 
-## After Strategy Creation — Hand Off to Backtest
+## Phase E — Backtest
 
 Regardless of which phase built the strategy, hand off to backtesting immediately:
 
 ```
-backtest_strategy(strategy_id, mode="full", lookback_hours|days|months|start/end omitted for timeframe-aware default)
+backtest_strategy(strategy_id, mode="full")
 ```
 
-Let `backtest_service` pick the lookback automatically via `recommended_lookback_months(timeframe)` — 3 months for 5m/15m/30m/1h, 6 months for 4h, 12 months for 1d. Only override when the user explicitly asks for a specific window.
+Omit `lookback_*` and date fields unless the user asked for a specific window — `backtest_service` picks a timeframe-aware default via `recommended_lookback_months(timeframe)`: 3 months for 5m/15m/30m/1h, 6 months for 4h, 12 months for 1d.
 
-Present the result using the `/review-backtest` skill's decision rule (PASS/FAIL against `threshold_spec`).
+Overrides go through the single `config` dict (matches `trading_defaults.json` keys). Example:
+```
+backtest_strategy(strategy_id, mode="full", lookback_hours=24, config={"slippage_pct": 0.002})
+```
+
+## Phase F — Review (PASS/FAIL against threshold_spec)
+
+Evaluate the backtest against 6 fixed thresholds from `server/src/services/data/threshold_spec.json` (copied verbatim from MangroveAI — `git diff` vs upstream is the drift check):
+
+| Metric | Threshold | Direction |
+|---|---|---|
+| `sortino_ratio` | ≥ 1.5 | higher is better |
+| `sharpe_ratio` | ≥ 1.2 | higher is better |
+| `calmar_ratio` | ≥ 1.0 | higher is better |
+| `irr_annualized` | ≥ 0.15 | higher is better |
+| `max_drawdown` | ≤ 0.7 | lower is better |
+| `win_rate` | ≥ 0.25 | higher is better |
+
+**Decision rule:**
+- **PASS** iff ALL six thresholds satisfied
+- **MARGINAL** if 4-5 of 6 satisfied (worth iterating; not ready for live)
+- **FAIL** if ≤ 3 of 6 satisfied (redesign or reject)
+
+### Present the verdict
+
+Always show the user:
+1. The verdict (PASS / MARGINAL / FAIL)
+2. Per-threshold breakdown — actual value vs threshold, ✓ or ✗ per row
+3. Next-step recommendation based on verdict:
+   - **PASS** → "Promote to paper (unrestricted) or live (requires allocation + backup confirmation). Which?"
+   - **MARGINAL** → "Iterate: widen backtest window, tweak params, or try a different reference. Want me to rerun with {specific change}?"
+   - **FAIL** → "This won't work as-is. Options: pick a different reference, change the goal, or accept it's not a viable strategy right now."
+
+### Never fabricate metrics
+
+If the `metrics` dict is missing, empty, or any field is null, **say so explicitly** — do not invent values. Quote the exact SDK response:
+
+> "The backtest response is missing `sharpe_ratio` — I can't verdict against the threshold. This usually means the SDK couldn't compute it (too few trades, or the data provider returned insufficient history). Options: rerun with a longer window, or check `resolved_window` in the response to confirm the window the server actually used."
+
+Likewise: if `total_trades == 0`, every ratio metric is meaningless (division by zero or undefined). Report it as **INSUFFICIENT_TRADES** — not PASS, not FAIL. Suggest widening the window or loosening signal filters.
 
 ## Prohibited
 

@@ -156,6 +156,7 @@ def test_live_skips_approval_when_none(temp_db, mock_mangroveai, mock_markets, s
         strategy_id="s1",
         wallet_address="0xabc",
         chain_id=84532,
+        slippage_pct=0.002,
     )
     assert trade.mode == "live"
     assert trade.status == "confirmed"
@@ -164,6 +165,9 @@ def test_live_skips_approval_when_none(temp_db, mock_mangroveai, mock_markets, s
     assert mock_markets.dex.get_quote.call_count == 1
     assert mock_markets.dex.prepare_swap.call_count == 1
     assert mock_markets.dex.broadcast.call_count == 1
+    # slippage_pct must be converted to percentage (x100) at the prepare_swap boundary.
+    _, kwargs = mock_markets.dex.prepare_swap.call_args
+    assert kwargs["slippage"] == pytest.approx(0.2)
 
 
 def test_live_full_flow_with_approval(temp_db, mock_mangroveai, mock_markets, stub_sign):
@@ -180,6 +184,7 @@ def test_live_full_flow_with_approval(temp_db, mock_mangroveai, mock_markets, st
         strategy_id="s1",
         wallet_address="0xabc",
         chain_id=84532,
+        slippage_pct=0.002,
     )
     assert trade.status == "confirmed"
     # broadcast called twice (approval + swap)
@@ -187,12 +192,37 @@ def test_live_full_flow_with_approval(temp_db, mock_mangroveai, mock_markets, st
     assert trade.fees["approval_tx_hash"] == "0xdeadbeef"
 
 
+def test_live_requires_slippage_pct(temp_db, mock_mangroveai, mock_markets, stub_sign):
+    """slippage_pct has no default in live mode — direct callers must pass
+    it (SwapRequest enforces), cron callers pull it from the active
+    allocation (migration 004)."""
+    from src.services.order_executor import execute_one
+    from src.shared.errors import SigningError
+
+    with pytest.raises(SigningError, match="slippage_pct is required"):
+        execute_one(_intent("buy"), mode="live", strategy_id="s1",
+                    wallet_address="0xabc", chain_id=84532)
+
+
+def test_live_rejects_slippage_above_cap(temp_db, mock_mangroveai, mock_markets, stub_sign):
+    """Defense-in-depth: even if somehow a slippage above 0.25% reaches
+    _live_swap (shouldn't, Pydantic rejects first), refuse to execute."""
+    from src.services.order_executor import execute_one
+    from src.shared.errors import SigningError
+
+    with pytest.raises(SigningError, match="outside allowed range"):
+        execute_one(_intent("buy"), mode="live", strategy_id="s1",
+                    wallet_address="0xabc", chain_id=84532,
+                    slippage_pct=0.01)  # 1%, over the 0.25% cap
+
+
 def test_live_requires_wallet_address(temp_db, mock_mangroveai, mock_markets, stub_sign):
     from src.services.order_executor import execute_one
     from src.shared.errors import SigningError
 
     with pytest.raises(SigningError):
-        execute_one(_intent("buy"), mode="live", strategy_id="s1", chain_id=84532)
+        execute_one(_intent("buy"), mode="live", strategy_id="s1",
+                    chain_id=84532, slippage_pct=0.002)
 
 
 def test_live_requires_chain_id(temp_db, mock_mangroveai, mock_markets, stub_sign):
@@ -200,7 +230,8 @@ def test_live_requires_chain_id(temp_db, mock_mangroveai, mock_markets, stub_sig
     from src.shared.errors import SigningError
 
     with pytest.raises(SigningError):
-        execute_one(_intent("buy"), mode="live", strategy_id="s1", wallet_address="0xabc")
+        execute_one(_intent("buy"), mode="live", strategy_id="s1",
+                    wallet_address="0xabc", slippage_pct=0.002)
 
 
 def test_live_wraps_sdk_failures(temp_db, mock_mangroveai, mock_markets, stub_sign):
@@ -210,7 +241,8 @@ def test_live_wraps_sdk_failures(temp_db, mock_mangroveai, mock_markets, stub_si
     mock_markets.dex.get_quote.side_effect = RuntimeError("upstream 503")
     with pytest.raises(SdkError):
         execute_one(_intent("buy"), mode="live", strategy_id="s1",
-                    wallet_address="0xabc", chain_id=84532)
+                    wallet_address="0xabc", chain_id=84532,
+                    slippage_pct=0.002)
 
 
 # -- Batching --------------------------------------------------------------

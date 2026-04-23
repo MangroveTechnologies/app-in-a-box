@@ -1033,6 +1033,108 @@ def _register_signals(server: FastMCP) -> None:
         ],
     ))
 
+    @server.tool()
+    async def get_signal(signal_name: str, api_key: str = "") -> str:
+        """Fetch a single signal's full metadata (params, description, category).
+
+        More detail than list_signals for a single name. Useful when the
+        agent knows which signal it wants but needs the parameter schema
+        before writing a strategy rule.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangroveai_client
+            return json.dumps(_dump(mangroveai_client().signals.get(signal_name)))
+        except Exception as e:  # noqa: BLE001
+            return _err("SIGNAL_GET_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_signal",
+        description="Fetch a single signal's full metadata + param schema.",
+        access="auth",
+        parameters=[
+            ToolParam(name="signal_name", type="string", required=True, description="Exact signal name (e.g. 'rsi_cross_up')"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def match_signals(
+        description: str, top_k: int = 5,
+        similarity_threshold: float = 0.5,
+        api_key: str = "",
+    ) -> str:
+        """Semantic match: find signals matching a natural-language description.
+
+        Backs /create-strategy Phase C: the agent has a user idea
+        ('bullish momentum on liquid crypto'), calls this to find
+        candidate signals, then falls through to kb_search for
+        parameter guidance. Higher-quality than text search over
+        signal names.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangroveai_client
+            r = mangroveai_client().signals.match(
+                description=description, top_k=top_k,
+                similarity_threshold=similarity_threshold,
+            )
+            return json.dumps(_dump(r))
+        except Exception as e:  # noqa: BLE001
+            return _err("SIGNAL_MATCH_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="match_signals",
+        description="Semantic match of signals against a natural-language description.",
+        access="auth",
+        parameters=[
+            ToolParam(name="description", type="string", required=True, description="Natural-language description of what you want"),
+            ToolParam(name="top_k", type="integer", required=False, description="Max results (default 5)"),
+            ToolParam(name="similarity_threshold", type="number", required=False, description="Min similarity (default 0.5)"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def search_signals(query: str, limit: int = 50, offset: int = 0,
+                             api_key: str = "") -> str:
+        """Text search over signals (complements list_signals's exhaustive iteration).
+
+        list_signals paginates the full catalog; search_signals filters
+        by a text query server-side. Prefer match_signals for
+        description-level intent; use this for name / keyword search.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from mangroveai.models import SearchSignalsRequest
+
+            from src.shared.clients.mangrove import mangroveai_client
+            req = SearchSignalsRequest(query=query, limit=limit, offset=offset)
+            page = mangroveai_client().signals.search(req)
+            items = [_dump(s) for s in getattr(page, "items", [])]
+            return json.dumps({
+                "items": items,
+                "total": getattr(page, "total", len(items)),
+                "limit": limit, "offset": offset,
+            })
+        except Exception as e:  # noqa: BLE001
+            return _err("SIGNAL_SEARCH_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="search_signals",
+        description="Text search signals (keyword/name). For intent-based matching, prefer match_signals.",
+        access="auth",
+        parameters=[
+            ToolParam(name="query", type="string", required=True, description="Text query"),
+            ToolParam(name="limit", type="integer", required=False, description="Page size (default 50)"),
+            ToolParam(name="offset", type="integer", required=False, description="Page offset"),
+            _APIKEY,
+        ],
+    ))
+
 
 # ---------------------------------------------------------------------------
 # On-chain intelligence (auth)
@@ -1227,8 +1329,65 @@ def _register_on_chain(server: FastMCP) -> None:
 
 
 def _register_defi(server: FastMCP) -> None:
-    """Placeholder — will be populated in the defi commit."""
-    pass
+    """Macro DeFi metrics (TVL, stablecoin supply)."""
+    from src.shared.clients.mangrove import mangroveai_client
+
+    @server.tool()
+    async def get_chain_tvl(chain: str, api_key: str = "") -> str:
+        """Total value locked in DeFi on a given chain."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            return json.dumps(_dump(mangroveai_client().defi.get_chain_tvl(chain=chain)))
+        except Exception as e:  # noqa: BLE001
+            return _err("DEFI_CHAIN_TVL_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_chain_tvl",
+        description="Total value locked (TVL) in DeFi on a given chain.",
+        access="auth",
+        parameters=[
+            ToolParam(name="chain", type="string", required=True, description="Chain (e.g. 'base', 'ethereum')"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_protocol_tvl(protocol: str, api_key: str = "") -> str:
+        """Total value locked in a specific DeFi protocol."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            return json.dumps(_dump(mangroveai_client().defi.get_protocol_tvl(protocol=protocol)))
+        except Exception as e:  # noqa: BLE001
+            return _err("DEFI_PROTOCOL_TVL_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_protocol_tvl",
+        description="TVL for a specific DeFi protocol (e.g. 'aave', 'uniswap').",
+        access="auth",
+        parameters=[
+            ToolParam(name="protocol", type="string", required=True, description="Protocol slug"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_stablecoin_metrics(api_key: str = "") -> str:
+        """Stablecoin supply + flow metrics (macro liquidity proxy)."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            return json.dumps(_dump(mangroveai_client().defi.get_stablecoin_metrics()))
+        except Exception as e:  # noqa: BLE001
+            return _err("DEFI_STABLECOIN_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_stablecoin_metrics",
+        description="Stablecoin supply + flow metrics (macro liquidity proxy).",
+        access="auth",
+        parameters=[_APIKEY],
+    ))
 
 
 # ---------------------------------------------------------------------------
@@ -1237,8 +1396,80 @@ def _register_defi(server: FastMCP) -> None:
 
 
 def _register_social(server: FastMCP) -> None:
-    """Placeholder — will be populated in the social commit."""
-    pass
+    """Twitter/X sentiment + influence + mentions. Experimental context."""
+    from src.shared.clients.mangrove import mangroveai_client
+
+    @server.tool()
+    async def get_sentiment(
+        topic: str, hours_back: int = 24, api_key: str = "",
+    ) -> str:
+        """Aggregate social sentiment for a topic (asset symbol or keyword)."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            r = mangroveai_client().social.get_sentiment(topic=topic, hours_back=hours_back)
+            return json.dumps(_dump(r))
+        except Exception as e:  # noqa: BLE001
+            return _err("SOCIAL_SENTIMENT_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_sentiment",
+        description="Aggregate social (X/Twitter) sentiment for a topic or asset.",
+        access="auth",
+        parameters=[
+            ToolParam(name="topic", type="string", required=True, description="Asset symbol or keyword"),
+            ToolParam(name="hours_back", type="integer", required=False, description="Window (default 24)"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_mentions(
+        topic: str, hours_back: int = 24, limit: int = 20, api_key: str = "",
+    ) -> str:
+        """Recent social mentions of a topic (raw posts)."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            r = mangroveai_client().social.get_mentions(
+                topic=topic, hours_back=hours_back, limit=limit,
+            )
+            return json.dumps(_dump(r))
+        except Exception as e:  # noqa: BLE001
+            return _err("SOCIAL_MENTIONS_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_mentions",
+        description="Recent social mentions of a topic (raw posts).",
+        access="auth",
+        parameters=[
+            ToolParam(name="topic", type="string", required=True, description="Asset symbol or keyword"),
+            ToolParam(name="hours_back", type="integer", required=False, description="Window (default 24)"),
+            ToolParam(name="limit", type="integer", required=False, description="Max posts (default 20)"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_influence_score(username: str, api_key: str = "") -> str:
+        """Influence score for a social username."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            r = mangroveai_client().social.get_influence_score(username=username)
+            return json.dumps(_dump(r))
+        except Exception as e:  # noqa: BLE001
+            return _err("SOCIAL_INFLUENCE_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_influence_score",
+        description="Influence score for a social username.",
+        access="auth",
+        parameters=[
+            ToolParam(name="username", type="string", required=True, description="Social username (no @)"),
+            _APIKEY,
+        ],
+    ))
 
 
 # ---------------------------------------------------------------------------
@@ -1247,8 +1478,57 @@ def _register_social(server: FastMCP) -> None:
 
 
 def _register_docs(server: FastMCP) -> None:
-    """Placeholder — will be populated in the docs commit."""
-    pass
+    """MangroveAI developer docs (API reference + guides)."""
+    from src.shared.clients.mangrove import mangroveai_client
+
+    @server.tool()
+    async def list_docs(api_key: str = "") -> str:
+        """List MangroveAI developer docs.
+
+        ⚠️ Upstream returns 404 'Documentation directory not found'
+        as of 2026-04-23. Tool wiring is correct; upstream docs
+        directory is either missing or mis-configured server-side.
+        Falls through cleanly if the docs come back online.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            items = mangroveai_client().docs.list()
+            return json.dumps([_dump(i) for i in items])
+        except Exception as e:  # noqa: BLE001
+            return _err("DOCS_LIST_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="list_docs",
+        description="List MangroveAI developer docs (API reference + guides).",
+        access="auth",
+        parameters=[_APIKEY],
+    ))
+
+    @server.tool()
+    async def get_doc_content(path: str, api_key: str = "") -> str:
+        """Fetch a MangroveAI doc by path.
+
+        Different from kb_get_document (KB content DB). This hits the
+        MangroveAI developer documentation — API reference, SDK migration
+        guides, etc.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            return json.dumps(_dump(mangroveai_client().docs.get_content(path=path)))
+        except Exception as e:  # noqa: BLE001
+            return _err("DOCS_GET_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_doc_content",
+        description="Fetch a MangroveAI developer doc by path (API reference, guides).",
+        access="auth",
+        parameters=[
+            ToolParam(name="path", type="string", required=True, description="Doc path (from list_docs)"),
+            _APIKEY,
+        ],
+    ))
 
 
 # ---------------------------------------------------------------------------
@@ -1598,6 +1878,41 @@ def _register_strategy(server: FastMCP) -> None:
         access="auth",
         parameters=[
             ToolParam(name="strategy_id", type="string", required=True, description="Agent strategy UUID"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def delete_strategy(strategy_id: str, api_key: str = "") -> str:
+        """Delete a strategy upstream on MangroveAI.
+
+        Workshop attendees create throwaway strategies and will want
+        to clean up. This hits mangroveai.strategies.delete — the
+        upstream strategy row is removed. Our LOCAL SQLite cache of
+        the strategy stays; the local row is harmless once the
+        upstream is gone, and we'd prefer to preserve the audit
+        trail for any trades/evaluations that referenced it.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.services.strategy_service import get_strategy
+            from src.shared.clients.mangrove import mangroveai_client
+            # Look up the mangrove_id from our local cache.
+            detail = get_strategy(strategy_id)
+            r = mangroveai_client().strategies.delete(detail.mangrove_id)
+            return json.dumps(_dump(r))
+        except AgentError as e:
+            return _handle_agent_error(e)
+        except Exception as e:  # noqa: BLE001
+            return _err("STRATEGY_DELETE_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="delete_strategy",
+        description="Delete a strategy upstream (local audit trail preserved).",
+        access="auth",
+        parameters=[
+            ToolParam(name="strategy_id", type="string", required=True, description="Agent (local) strategy UUID"),
             _APIKEY,
         ],
     ))

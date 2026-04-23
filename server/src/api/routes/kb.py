@@ -34,3 +34,38 @@ async def glossary(term: str) -> Any:
         return _dump(mangroveai_client().kb.glossary.get(term))
     except Exception as e:  # noqa: BLE001
         raise SdkError(f"kb.glossary.get failed: {e}") from e
+
+
+@router.get("/documents", summary="List all KB documents (summary only)")
+async def documents_list() -> Any:
+    try:
+        return [_dump(d) for d in mangroveai_client().kb.documents.list()]
+    except Exception as e:  # noqa: BLE001
+        raise SdkError(f"kb.documents.list failed: {e}") from e
+
+
+@router.get("/documents/{slug}", summary="Full KB document by slug")
+async def documents_get(slug: str) -> Any:
+    try:
+        return _dump(mangroveai_client().kb.documents.get(slug))
+    except Exception as e:  # noqa: BLE001
+        raise SdkError(f"kb.documents.get failed: {e}") from e
+
+
+@router.get("/indicators", summary="List KB indicator docs (optionally filtered by category)")
+async def indicators_list(category: str | None = None) -> Any:
+    try:
+        kwargs: dict[str, Any] = {}
+        if category is not None:
+            kwargs["category"] = category
+        return [_dump(i) for i in mangroveai_client().kb.indicators.list(**kwargs)]
+    except Exception as e:  # noqa: BLE001
+        raise SdkError(f"kb.indicators.list failed: {e}") from e
+
+
+@router.get("/tags", summary="List all KB tags")
+async def tags_list() -> Any:
+    try:
+        return [_dump(t) for t in mangroveai_client().kb.tags.list()]
+    except Exception as e:  # noqa: BLE001
+        raise SdkError(f"kb.tags.list failed: {e}") from e

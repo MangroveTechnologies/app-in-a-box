@@ -155,3 +155,82 @@ async def dex_swap(req: SwapRequest) -> dict:
         "approval_tx_hash": trade.fees.get("approval_tx_hash"),
         "trade_log_id": trade.id,
     }
+
+
+def _dump(obj: Any) -> Any:
+    return obj.model_dump() if hasattr(obj, "model_dump") else obj
+
+
+@router.get(
+    "/tx-status",
+    summary="Check the status of a broadcast transaction",
+    description=(
+        "Pass-through to mangrovemarkets.dex.tx_status. Use after "
+        "execute_swap to verify a transaction landed + its final state "
+        "(confirmed | pending | failed). Workshop-critical: lets the "
+        "agent/user confirm a swap actually settled before acting on "
+        "balance changes."
+    ),
+)
+async def tx_status(
+    tx_hash: str,
+    chain_id: int,
+    venue_id: str | None = None,
+) -> Any:
+    try:
+        return _dump(mangrovemarkets_client().dex.tx_status(
+            tx_hash=tx_hash, chain_id=chain_id, venue_id=venue_id,
+        ))
+    except Exception as e:  # noqa: BLE001
+        raise SdkError(f"dex.tx_status failed: {e}") from e
+
+
+@router.get(
+    "/token-info",
+    summary="Look up token metadata by contract address",
+    description=(
+        "Pass-through to mangrovemarkets.dex.token_info. Returns "
+        "symbol, decimals, name, and any venue-specific metadata for "
+        "the token at `address` on `chain_id`."
+    ),
+)
+async def token_info(chain_id: int, address: str) -> Any:
+    try:
+        return _dump(mangrovemarkets_client().dex.token_info(
+            chain_id=chain_id, address=address,
+        ))
+    except Exception as e:  # noqa: BLE001
+        raise SdkError(f"dex.token_info failed: {e}") from e
+
+
+@router.get(
+    "/spot-price",
+    summary="Current spot price for one or more tokens",
+    description=(
+        "Pass-through to mangrovemarkets.dex.spot_price. `tokens` is a "
+        "comma-separated list of symbols or addresses."
+    ),
+)
+async def spot_price(chain_id: int, tokens: str) -> Any:
+    try:
+        return _dump(mangrovemarkets_client().dex.spot_price(
+            chain_id=chain_id, tokens=tokens,
+        ))
+    except Exception as e:  # noqa: BLE001
+        raise SdkError(f"dex.spot_price failed: {e}") from e
+
+
+@router.get(
+    "/gas-price",
+    summary="Current gas price estimate for the chain",
+    description=(
+        "Pass-through to mangrovemarkets.dex.gas_price. Useful as a "
+        "pre-flight check before a swap — estimate how much the tx "
+        "will cost before committing."
+    ),
+)
+async def gas_price(chain_id: int) -> Any:
+    try:
+        return _dump(mangrovemarkets_client().dex.gas_price(chain_id=chain_id))
+    except Exception as e:  # noqa: BLE001
+        raise SdkError(f"dex.gas_price failed: {e}") from e

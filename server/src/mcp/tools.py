@@ -398,6 +398,127 @@ def _register_dex(server: FastMCP) -> None:
         ],
     ))
 
+    @server.tool()
+    async def get_tx_status(
+        tx_hash: str, chain_id: int,
+        venue_id: str | None = None,
+        api_key: str = "",
+    ) -> str:
+        """Check the status of a broadcast transaction.
+
+        Workshop-critical post-swap verification: execute_swap returns
+        a tx_hash before the tx is finalized. Call this tool after to
+        confirm the transaction landed (status: confirmed | pending |
+        failed). Pass-through to mangrovemarkets.dex.tx_status.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            result = mangrovemarkets_client().dex.tx_status(
+                tx_hash=tx_hash, chain_id=chain_id, venue_id=venue_id,
+            )
+            return json.dumps(_dump(result))
+        except Exception as e:  # noqa: BLE001
+            return _err("DEX_TX_STATUS_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_tx_status",
+        description=(
+            "Verify a broadcast transaction's final state. Call after "
+            "execute_swap — the returned tx_hash isn't confirmed yet. "
+            "Returns status: confirmed | pending | failed + block info."
+        ),
+        access="auth",
+        parameters=[
+            ToolParam(name="tx_hash", type="string", required=True, description="Transaction hash returned by execute_swap"),
+            ToolParam(name="chain_id", type="integer", required=True, description="EVM chain id (8453 = Base mainnet)"),
+            ToolParam(name="venue_id", type="string", required=False, description="Optional: pin to a specific venue"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_token_info(
+        chain_id: int, address: str, api_key: str = "",
+    ) -> str:
+        """Look up token metadata (symbol, decimals, name) by contract address."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            result = mangrovemarkets_client().dex.token_info(
+                chain_id=chain_id, address=address,
+            )
+            return json.dumps(_dump(result))
+        except Exception as e:  # noqa: BLE001
+            return _err("DEX_TOKEN_INFO_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_token_info",
+        description="Resolve token contract address → symbol/decimals/name.",
+        access="auth",
+        parameters=[
+            ToolParam(name="chain_id", type="integer", required=True, description="EVM chain id"),
+            ToolParam(name="address", type="string", required=True, description="Token contract address"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_spot_price(
+        chain_id: int, tokens: str, api_key: str = "",
+    ) -> str:
+        """Current spot price for one or more tokens (comma-separated)."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            result = mangrovemarkets_client().dex.spot_price(
+                chain_id=chain_id, tokens=tokens,
+            )
+            return json.dumps(_dump(result))
+        except Exception as e:  # noqa: BLE001
+            return _err("DEX_SPOT_PRICE_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_spot_price",
+        description="Current spot price for one or more tokens on a chain.",
+        access="auth",
+        parameters=[
+            ToolParam(name="chain_id", type="integer", required=True, description="EVM chain id"),
+            ToolParam(name="tokens", type="string", required=True, description="Comma-separated token symbols or addresses"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_gas_price(chain_id: int, api_key: str = "") -> str:
+        """Current gas price estimate for a chain.
+
+        Useful as a pre-flight check before a swap — estimate how much
+        the tx will cost before committing. Returns slow / standard /
+        fast tier estimates per the venue's oracle.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            result = mangrovemarkets_client().dex.gas_price(chain_id=chain_id)
+            return json.dumps(_dump(result))
+        except Exception as e:  # noqa: BLE001
+            return _err("DEX_GAS_PRICE_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_gas_price",
+        description="Gas price estimate for a chain (pre-flight before execute_swap).",
+        access="auth",
+        parameters=[
+            ToolParam(name="chain_id", type="integer", required=True, description="EVM chain id"),
+            _APIKEY,
+        ],
+    ))
+
 
 # ---------------------------------------------------------------------------
 # Market data (auth)
@@ -962,6 +1083,106 @@ def _register_kb(server: FastMCP) -> None:
             ToolParam(name="limit", type="integer", required=False, description="Max results"),
             _APIKEY,
         ],
+    ))
+
+    @server.tool()
+    async def kb_glossary_get(term: str, api_key: str = "") -> str:
+        """Look up a single glossary term (definition + backlinks).
+
+        Cheaper + more focused than kb_search when the agent already
+        knows the exact term it wants. Backlinks field shows related
+        indicators and documents.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        from src.shared.clients.mangrove import mangroveai_client
+        try:
+            return json.dumps(_dump(mangroveai_client().kb.glossary.get(term)))
+        except Exception as e:  # noqa: BLE001
+            return _err("KB_GLOSSARY_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="kb_glossary_get",
+        description="Look up a KB glossary term (definition + backlinks).",
+        access="auth",
+        parameters=[
+            ToolParam(name="term", type="string", required=True, description="Glossary term (exact match)"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def kb_get_document(slug: str, api_key: str = "") -> str:
+        """Fetch a full KB document by slug.
+
+        Use when kb_search surfaces a document and the agent needs the
+        full body (not just the search snippet).
+        """
+        if not _require(api_key):
+            return _auth_error()
+        from src.shared.clients.mangrove import mangroveai_client
+        try:
+            return json.dumps(_dump(mangroveai_client().kb.documents.get(slug)))
+        except Exception as e:  # noqa: BLE001
+            return _err("KB_DOCUMENT_NOT_FOUND", str(e))
+
+    register_tool(ToolEntry(
+        name="kb_get_document",
+        description="Fetch a KB document by slug (full body, not search snippet).",
+        access="auth",
+        parameters=[
+            ToolParam(name="slug", type="string", required=True, description="Document slug (e.g. 'momentum-strategies')"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def kb_list_indicators(
+        category: str | None = None, api_key: str = "",
+    ) -> str:
+        """List KB indicator docs. Optionally filter by category.
+
+        Useful for the /create-strategy skill's Phase C: agent picks
+        a signal from list_signals, then calls this to find the KB
+        docs explaining that indicator family (momentum, trend, etc).
+        """
+        if not _require(api_key):
+            return _auth_error()
+        from src.shared.clients.mangrove import mangroveai_client
+        kwargs: dict[str, Any] = {}
+        if category is not None:
+            kwargs["category"] = category
+        try:
+            return json.dumps([_dump(i) for i in mangroveai_client().kb.indicators.list(**kwargs)])
+        except Exception as e:  # noqa: BLE001
+            return _err("KB_INDICATORS_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="kb_list_indicators",
+        description="List KB indicator docs (optionally by category).",
+        access="auth",
+        parameters=[
+            ToolParam(name="category", type="string", required=False, description="Filter: momentum | trend | mean_reversion | volatility | volume | pattern"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def kb_list_tags(api_key: str = "") -> str:
+        """List all KB tags — useful for navigation or kb_search filtering."""
+        if not _require(api_key):
+            return _auth_error()
+        from src.shared.clients.mangrove import mangroveai_client
+        try:
+            return json.dumps([_dump(t) for t in mangroveai_client().kb.tags.list()])
+        except Exception as e:  # noqa: BLE001
+            return _err("KB_TAGS_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="kb_list_tags",
+        description="List KB tags (navigation + kb_search filtering).",
+        access="auth",
+        parameters=[_APIKEY],
     ))
 
 

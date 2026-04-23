@@ -257,6 +257,164 @@ def _register_wallet(server: FastMCP) -> None:
         ],
     ))
 
+    # --- Portfolio (on-chain aggregate view of a wallet) -----------------
+    # Thin wrappers over mangrovemarkets.portfolio.*. The SDK accepts
+    # `addresses` as a comma-separated string (one or more wallets) and
+    # optional `chain_id` to pin the query.
+
+    @server.tool()
+    async def portfolio_value(
+        addresses: str, chain_id: int | None = None, api_key: str = "",
+    ) -> str:
+        """Aggregate USD value of one or more wallets.
+
+        `addresses` is a comma-separated list (agent can query multiple
+        wallets at once). Omit `chain_id` to get a cross-chain total.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            result = mangrovemarkets_client().portfolio.value(
+                addresses=addresses, chain_id=chain_id,
+            )
+            return json.dumps(_dump(result))
+        except Exception as e:  # noqa: BLE001
+            return _err("PORTFOLIO_VALUE_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="portfolio_value",
+        description="Aggregate USD value of one or more wallet addresses.",
+        access="auth",
+        parameters=[
+            ToolParam(name="addresses", type="string", required=True, description="Comma-separated wallet addresses"),
+            ToolParam(name="chain_id", type="integer", required=False, description="Optional: pin to a single chain"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def portfolio_pnl(
+        addresses: str, chain_id: int | None = None, api_key: str = "",
+    ) -> str:
+        """Running P&L across one or more wallets.
+
+        Returns realized + unrealized P&L based on the upstream's
+        cost-basis accounting. Workshop-critical answer to "how am
+        I doing?"
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            result = mangrovemarkets_client().portfolio.pnl(
+                addresses=addresses, chain_id=chain_id,
+            )
+            return json.dumps(_dump(result))
+        except Exception as e:  # noqa: BLE001
+            return _err("PORTFOLIO_PNL_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="portfolio_pnl",
+        description="Realized + unrealized P&L for one or more wallets.",
+        access="auth",
+        parameters=[
+            ToolParam(name="addresses", type="string", required=True, description="Comma-separated wallet addresses"),
+            ToolParam(name="chain_id", type="integer", required=False, description="Optional: pin to a single chain"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def portfolio_tokens(
+        addresses: str, chain_id: int | None = None, api_key: str = "",
+    ) -> str:
+        """Per-token holdings for one or more wallets.
+
+        More detail than `get_balances` — includes USD value per
+        token, price, cost basis, and position P&L.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            result = mangrovemarkets_client().portfolio.tokens(
+                addresses=addresses, chain_id=chain_id,
+            )
+            return json.dumps(_dump(result))
+        except Exception as e:  # noqa: BLE001
+            return _err("PORTFOLIO_TOKENS_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="portfolio_tokens",
+        description="Per-token holdings with USD value + per-position P&L.",
+        access="auth",
+        parameters=[
+            ToolParam(name="addresses", type="string", required=True, description="Comma-separated wallet addresses"),
+            ToolParam(name="chain_id", type="integer", required=False, description="Optional: pin to a single chain"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def portfolio_defi(
+        addresses: str, chain_id: int | None = None, api_key: str = "",
+    ) -> str:
+        """DeFi positions (LPs, lending, staking) for one or more wallets."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            result = mangrovemarkets_client().portfolio.defi(
+                addresses=addresses, chain_id=chain_id,
+            )
+            return json.dumps(_dump(result))
+        except Exception as e:  # noqa: BLE001
+            return _err("PORTFOLIO_DEFI_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="portfolio_defi",
+        description="DeFi positions (LP, lending, staking) across wallets.",
+        access="auth",
+        parameters=[
+            ToolParam(name="addresses", type="string", required=True, description="Comma-separated wallet addresses"),
+            ToolParam(name="chain_id", type="integer", required=False, description="Optional: pin to a single chain"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def portfolio_history(
+        address: str, limit: int = 50, api_key: str = "",
+    ) -> str:
+        """On-chain transaction history for a SINGLE wallet (not comma-separated).
+
+        Different from our local `list_trades` (which covers strategy-
+        executed swaps only). This tool covers EVERY on-chain tx for
+        the wallet — deposits, withdrawals, external swaps, etc.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            items = mangrovemarkets_client().portfolio.history(
+                address=address, limit=limit,
+            )
+            return json.dumps([_dump(i) for i in items])
+        except Exception as e:  # noqa: BLE001
+            return _err("PORTFOLIO_HISTORY_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="portfolio_history",
+        description="On-chain tx history for a single wallet (all txs, not just strategy-driven).",
+        access="auth",
+        parameters=[
+            ToolParam(name="address", type="string", required=True, description="Single wallet address"),
+            ToolParam(name="limit", type="integer", required=False, description="Max results (default 50)"),
+            _APIKEY,
+        ],
+    ))
+
 
 # ---------------------------------------------------------------------------
 # DEX (auth)

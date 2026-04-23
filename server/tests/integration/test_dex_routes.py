@@ -63,10 +63,33 @@ def client(tmp_path, monkeypatch):
     sdk.dex.broadcast.return_value = bcast
 
     tx_status = MagicMock()
+    tx_status.model_dump.return_value = {
+        "status": "confirmed", "block_number": 42, "error_message": None,
+    }
     tx_status.status = "confirmed"
     tx_status.block_number = 42
     tx_status.error_message = None
     sdk.dex.tx_status.return_value = tx_status
+
+    token_info = MagicMock()
+    token_info.model_dump.return_value = {
+        "address": "0x" + "a" * 40, "symbol": "USDC", "name": "USD Coin",
+        "decimals": 6, "chain_id": 8453,
+    }
+    sdk.dex.token_info.return_value = token_info
+
+    spot_price = MagicMock()
+    spot_price.model_dump.return_value = {
+        "chain_id": 8453,
+        "prices": {"USDC": 1.0, "ETH": 2500.0},
+    }
+    sdk.dex.spot_price.return_value = spot_price
+
+    gas_price = MagicMock()
+    gas_price.model_dump.return_value = {
+        "chain_id": 8453, "slow_gwei": 0.03, "standard_gwei": 0.05, "fast_gwei": 0.08,
+    }
+    sdk.dex.gas_price.return_value = gas_price
 
     monkeypatch.setattr("src.api.routes.dex.mangrovemarkets_client", lambda: sdk)
     monkeypatch.setattr("src.services.order_executor.mangrovemarkets_client", lambda: sdk)
@@ -213,3 +236,52 @@ def test_auth_required_on_dex_endpoints(client):
     assert client.post("/api/v1/agent/dex/quote",
                        json={"input_token": "USDC", "output_token": "ETH",
                              "amount": 1, "chain_id": 84532}).status_code == 401
+
+
+def test_tx_status(client):
+    r = client.get(
+        "/api/v1/agent/dex/tx-status?tx_hash=0xdeadbeef&chain_id=8453",
+        headers=_auth(),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "confirmed"
+    assert body["block_number"] == 42
+
+
+def test_token_info(client):
+    r = client.get(
+        "/api/v1/agent/dex/token-info?chain_id=8453&address=0x" + "a" * 40,
+        headers=_auth(),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["symbol"] == "USDC"
+    assert body["decimals"] == 6
+
+
+def test_spot_price(client):
+    r = client.get(
+        "/api/v1/agent/dex/spot-price?chain_id=8453&tokens=USDC,ETH",
+        headers=_auth(),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["prices"]["ETH"] == 2500.0
+
+
+def test_gas_price(client):
+    r = client.get(
+        "/api/v1/agent/dex/gas-price?chain_id=8453",
+        headers=_auth(),
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["standard_gwei"] == 0.05
+
+
+def test_auth_required_on_new_dex_endpoints(client):
+    assert client.get("/api/v1/agent/dex/tx-status?tx_hash=x&chain_id=1").status_code == 401
+    assert client.get("/api/v1/agent/dex/token-info?chain_id=1&address=0x0").status_code == 401
+    assert client.get("/api/v1/agent/dex/spot-price?chain_id=1&tokens=X").status_code == 401
+    assert client.get("/api/v1/agent/dex/gas-price?chain_id=1").status_code == 401

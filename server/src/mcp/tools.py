@@ -80,6 +80,10 @@ def register(server: FastMCP):
     _register_dex(server)
     _register_market(server)
     _register_signals(server)
+    _register_on_chain(server)
+    _register_defi(server)
+    _register_social(server)
+    _register_docs(server)
     _register_strategy(server)
     _register_logs(server)
     _register_kb(server)
@@ -257,6 +261,164 @@ def _register_wallet(server: FastMCP) -> None:
         ],
     ))
 
+    # --- Portfolio (on-chain aggregate view of a wallet) -----------------
+    # Thin wrappers over mangrovemarkets.portfolio.*. The SDK accepts
+    # `addresses` as a comma-separated string (one or more wallets) and
+    # optional `chain_id` to pin the query.
+
+    @server.tool()
+    async def portfolio_value(
+        addresses: str, chain_id: int | None = None, api_key: str = "",
+    ) -> str:
+        """Aggregate USD value of one or more wallets.
+
+        `addresses` is a comma-separated list (agent can query multiple
+        wallets at once). Omit `chain_id` to get a cross-chain total.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            result = mangrovemarkets_client().portfolio.value(
+                addresses=addresses, chain_id=chain_id,
+            )
+            return json.dumps(_dump(result))
+        except Exception as e:  # noqa: BLE001
+            return _err("PORTFOLIO_VALUE_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="portfolio_value",
+        description="Aggregate USD value of one or more wallet addresses.",
+        access="auth",
+        parameters=[
+            ToolParam(name="addresses", type="string", required=True, description="Comma-separated wallet addresses"),
+            ToolParam(name="chain_id", type="integer", required=False, description="Optional: pin to a single chain"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def portfolio_pnl(
+        addresses: str, chain_id: int | None = None, api_key: str = "",
+    ) -> str:
+        """Running P&L across one or more wallets.
+
+        Returns realized + unrealized P&L based on the upstream's
+        cost-basis accounting. Workshop-critical answer to "how am
+        I doing?"
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            result = mangrovemarkets_client().portfolio.pnl(
+                addresses=addresses, chain_id=chain_id,
+            )
+            return json.dumps(_dump(result))
+        except Exception as e:  # noqa: BLE001
+            return _err("PORTFOLIO_PNL_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="portfolio_pnl",
+        description="Realized + unrealized P&L for one or more wallets.",
+        access="auth",
+        parameters=[
+            ToolParam(name="addresses", type="string", required=True, description="Comma-separated wallet addresses"),
+            ToolParam(name="chain_id", type="integer", required=False, description="Optional: pin to a single chain"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def portfolio_tokens(
+        addresses: str, chain_id: int | None = None, api_key: str = "",
+    ) -> str:
+        """Per-token holdings for one or more wallets.
+
+        More detail than `get_balances` — includes USD value per
+        token, price, cost basis, and position P&L.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            result = mangrovemarkets_client().portfolio.tokens(
+                addresses=addresses, chain_id=chain_id,
+            )
+            return json.dumps(_dump(result))
+        except Exception as e:  # noqa: BLE001
+            return _err("PORTFOLIO_TOKENS_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="portfolio_tokens",
+        description="Per-token holdings with USD value + per-position P&L.",
+        access="auth",
+        parameters=[
+            ToolParam(name="addresses", type="string", required=True, description="Comma-separated wallet addresses"),
+            ToolParam(name="chain_id", type="integer", required=False, description="Optional: pin to a single chain"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def portfolio_defi(
+        addresses: str, chain_id: int | None = None, api_key: str = "",
+    ) -> str:
+        """DeFi positions (LPs, lending, staking) for one or more wallets."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            result = mangrovemarkets_client().portfolio.defi(
+                addresses=addresses, chain_id=chain_id,
+            )
+            return json.dumps(_dump(result))
+        except Exception as e:  # noqa: BLE001
+            return _err("PORTFOLIO_DEFI_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="portfolio_defi",
+        description="DeFi positions (LP, lending, staking) across wallets.",
+        access="auth",
+        parameters=[
+            ToolParam(name="addresses", type="string", required=True, description="Comma-separated wallet addresses"),
+            ToolParam(name="chain_id", type="integer", required=False, description="Optional: pin to a single chain"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def portfolio_history(
+        address: str, limit: int = 50, api_key: str = "",
+    ) -> str:
+        """On-chain transaction history for a SINGLE wallet (not comma-separated).
+
+        Different from our local `list_trades` (which covers strategy-
+        executed swaps only). This tool covers EVERY on-chain tx for
+        the wallet — deposits, withdrawals, external swaps, etc.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            items = mangrovemarkets_client().portfolio.history(
+                address=address, limit=limit,
+            )
+            return json.dumps([_dump(i) for i in items])
+        except Exception as e:  # noqa: BLE001
+            return _err("PORTFOLIO_HISTORY_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="portfolio_history",
+        description="On-chain tx history for a single wallet (all txs, not just strategy-driven).",
+        access="auth",
+        parameters=[
+            ToolParam(name="address", type="string", required=True, description="Single wallet address"),
+            ToolParam(name="limit", type="integer", required=False, description="Max results (default 50)"),
+            _APIKEY,
+        ],
+    ))
+
 
 # ---------------------------------------------------------------------------
 # DEX (auth)
@@ -398,6 +560,264 @@ def _register_dex(server: FastMCP) -> None:
         ],
     ))
 
+    @server.tool()
+    async def get_tx_status(
+        tx_hash: str, chain_id: int,
+        venue_id: str | None = None,
+        api_key: str = "",
+    ) -> str:
+        """Check the status of a broadcast transaction.
+
+        Workshop-critical post-swap verification: execute_swap returns
+        a tx_hash before the tx is finalized. Call this tool after to
+        confirm the transaction landed (status: confirmed | pending |
+        failed). Pass-through to mangrovemarkets.dex.tx_status.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            result = mangrovemarkets_client().dex.tx_status(
+                tx_hash=tx_hash, chain_id=chain_id, venue_id=venue_id,
+            )
+            return json.dumps(_dump(result))
+        except Exception as e:  # noqa: BLE001
+            return _err("DEX_TX_STATUS_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_tx_status",
+        description=(
+            "Verify a broadcast transaction's final state. Call after "
+            "execute_swap — the returned tx_hash isn't confirmed yet. "
+            "Returns status: confirmed | pending | failed + block info."
+        ),
+        access="auth",
+        parameters=[
+            ToolParam(name="tx_hash", type="string", required=True, description="Transaction hash returned by execute_swap"),
+            ToolParam(name="chain_id", type="integer", required=True, description="EVM chain id (8453 = Base mainnet)"),
+            ToolParam(name="venue_id", type="string", required=False, description="Optional: pin to a specific venue"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_token_info(
+        chain_id: int, address: str, api_key: str = "",
+    ) -> str:
+        """Look up token metadata (symbol, decimals, name) by contract address.
+
+        ⚠️ CURRENTLY BROKEN pending upstream SDK fix. The mangrovemarkets
+        SDK's TokenInfo pydantic model expects flat top-level fields
+        (address, symbol, name, decimals) but the server response nests
+        them under a `token` sub-dict. Every call returns
+        DEX_TOKEN_INFO_FAILED with a 4-validation-error message.
+        Tracked: https://github.com/MangroveTechnologies/MangroveMarkets-MCP-Server/issues/62
+        Fall back to kb_glossary_get or kb_search for token concept
+        lookups until this is fixed and the SDK version bumped.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            result = mangrovemarkets_client().dex.token_info(
+                chain_id=chain_id, address=address,
+            )
+            return json.dumps(_dump(result))
+        except Exception as e:  # noqa: BLE001
+            return _err("DEX_TOKEN_INFO_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_token_info",
+        description="⚠️ BROKEN upstream (MangroveMarkets-MCP-Server#62). Use kb_glossary_get / kb_search for token concepts until SDK bump.",
+        access="auth",
+        parameters=[
+            ToolParam(name="chain_id", type="integer", required=True, description="EVM chain id"),
+            ToolParam(name="address", type="string", required=True, description="Token contract address"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_spot_price(
+        chain_id: int, tokens: str, api_key: str = "",
+    ) -> str:
+        """Current spot price for one or more tokens.
+
+        `tokens` is a COMMA-SEPARATED LIST OF CONTRACT ADDRESSES.
+        Symbols are NOT accepted (upstream 1inch backend rejects
+        them with 400 Bad Request). Use get_token_info first if
+        you only have a symbol — though that tool is currently
+        broken (see its docstring). Workshop path: hardcode known
+        addresses (USDC on Base = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913,
+        WETH on Base = 0x4200000000000000000000000000000000000006).
+
+        Prices are returned as wei-denominated integers (string form).
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            result = mangrovemarkets_client().dex.spot_price(
+                chain_id=chain_id, tokens=tokens,
+            )
+            return json.dumps(_dump(result))
+        except Exception as e:  # noqa: BLE001
+            return _err("DEX_SPOT_PRICE_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_spot_price",
+        description="Current spot price for one or more tokens on a chain.",
+        access="auth",
+        parameters=[
+            ToolParam(name="chain_id", type="integer", required=True, description="EVM chain id"),
+            ToolParam(name="tokens", type="string", required=True, description="Comma-separated token symbols or addresses"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_gas_price(chain_id: int, api_key: str = "") -> str:
+        """Current gas price estimate for a chain.
+
+        Pre-flight check before a swap. Returns a `GasPrice` payload
+        where the SDK's flat top-level fields (`low`, `medium`, `high`,
+        `base_fee`) are currently null; real values are nested under
+        the `gas` key:
+            gas.baseFee                      — current base fee in wei
+            gas.low.maxPriorityFeePerGas     — tip for slow tx
+            gas.low.maxFeePerGas             — total cap for slow tx
+            gas.medium.{maxPriorityFeePerGas,maxFeePerGas}
+            gas.high.{maxPriorityFeePerGas,maxFeePerGas}
+
+        To estimate total cost in ETH for a swap, multiply a chosen
+        tier's maxFeePerGas by the gas limit returned by a quote.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            result = mangrovemarkets_client().dex.gas_price(chain_id=chain_id)
+            return json.dumps(_dump(result))
+        except Exception as e:  # noqa: BLE001
+            return _err("DEX_GAS_PRICE_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_gas_price",
+        description="Gas price estimate for a chain (pre-flight before execute_swap).",
+        access="auth",
+        parameters=[
+            ToolParam(name="chain_id", type="integer", required=True, description="EVM chain id"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_token_search(
+        chain_id: int, query: str, api_key: str = "",
+    ) -> str:
+        """Fuzzy-search tokens by symbol or partial name.
+
+        Lets the agent resolve a symbol the user typed into a concrete
+        contract address. Pairs with the other DEX tools that need
+        addresses (get_spot_price, get_quote with address inputs, etc).
+        Current workaround for the broken get_token_info.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            results = mangrovemarkets_client().dex.token_search(
+                chain_id=chain_id, query=query,
+            )
+            return json.dumps([_dump(r) for r in results])
+        except Exception as e:  # noqa: BLE001
+            return _err("DEX_TOKEN_SEARCH_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_token_search",
+        description="Fuzzy token search by symbol / partial name. Returns candidate contract addresses.",
+        access="auth",
+        parameters=[
+            ToolParam(name="chain_id", type="integer", required=True, description="EVM chain id"),
+            ToolParam(name="query", type="string", required=True, description="Symbol or partial name (e.g. 'USDC', 'Pepe')"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_dex_chart(
+        chain_id: int, token0: str, token1: str, period: str = "1h",
+        api_key: str = "",
+    ) -> str:
+        """OHLC chart candles for a token pair on a DEX.
+
+        ⚠️ CURRENTLY BROKEN upstream. The mangrovemarkets SDK's
+        chart() wrapper sends token0/token1 fields but the upstream
+        1inch chart tool requires an `address` field. Every real
+        call returns DEX_CHART_FAILED with a validation error.
+        Fall back to get_ohlcv (CEX-aggregated from MangroveAI) for
+        price history until this is fixed.
+
+        Different from get_ohlcv: that one hits MangroveAI's
+        CEX-aggregated crypto_assets data; this one (when fixed)
+        pulls DEX-native candles for a specific on-chain pair.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            result = mangrovemarkets_client().dex.chart(
+                chain_id=chain_id, token0=token0, token1=token1, period=period,
+            )
+            return json.dumps([_dump(c) for c in result])
+        except Exception as e:  # noqa: BLE001
+            return _err("DEX_CHART_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_dex_chart",
+        description="⚠️ BROKEN upstream (SDK sends token0/token1, server wants `address`). Use get_ohlcv for price history until fixed.",
+        access="auth",
+        parameters=[
+            ToolParam(name="chain_id", type="integer", required=True, description="EVM chain id"),
+            ToolParam(name="token0", type="string", required=True, description="Base token (symbol or address)"),
+            ToolParam(name="token1", type="string", required=True, description="Quote token (symbol or address)"),
+            ToolParam(name="period", type="string", required=False, description="Bar period (default '1h')"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_allowances(
+        chain_id: int, wallet: str, spender: str, api_key: str = "",
+    ) -> str:
+        """ERC-20 allowance check — has the wallet approved `spender`?
+
+        Debugging / pre-approval check before execute_swap. Useful to
+        diagnose "my swap keeps failing" — often an expired approval.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            result = mangrovemarkets_client().dex.allowances(
+                chain_id=chain_id, wallet=wallet, spender=spender,
+            )
+            return json.dumps(_dump(result))
+        except Exception as e:  # noqa: BLE001
+            return _err("DEX_ALLOWANCES_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_allowances",
+        description="Check ERC-20 allowances a wallet has granted a spender (approve_token output).",
+        access="auth",
+        parameters=[
+            ToolParam(name="chain_id", type="integer", required=True, description="EVM chain id"),
+            ToolParam(name="wallet", type="string", required=True, description="Wallet address"),
+            ToolParam(name="spender", type="string", required=True, description="Spender contract address (e.g. a router)"),
+            _APIKEY,
+        ],
+    ))
+
 
 # ---------------------------------------------------------------------------
 # Market data (auth)
@@ -473,6 +893,108 @@ def _register_market(server: FastMCP) -> None:
         ],
     ))
 
+    @server.tool()
+    async def get_trending(api_key: str = "") -> str:
+        """Current trending crypto assets.
+
+        Pass-through to `mangroveai.crypto_assets.get_trending()`.
+        Useful for "what's hot right now" quick-glance. No filters.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangroveai_client
+            return json.dumps(_dump(mangroveai_client().crypto_assets.get_trending()))
+        except Exception as e:  # noqa: BLE001
+            return _err("CRYPTO_TRENDING_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_trending",
+        description="Trending crypto assets right now.",
+        access="auth",
+        parameters=[_APIKEY],
+    ))
+
+    @server.tool()
+    async def list_approved_assets(
+        min_score: float | None = None, limit: int = 100,
+        api_key: str = "",
+    ) -> str:
+        """List approved-universe crypto assets (with optional min_score filter).
+
+        Defaults to approved_only=True (the safe workshop subset).
+        Workshop attendees use this to see what's tradeable.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangroveai_client
+            kwargs: dict[str, Any] = {"approved_only": True, "limit": limit}
+            if min_score is not None:
+                kwargs["min_score"] = min_score
+            items = mangroveai_client().crypto_assets.list(**kwargs)
+            return json.dumps([_dump(i) for i in items])
+        except Exception as e:  # noqa: BLE001
+            return _err("CRYPTO_LIST_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="list_approved_assets",
+        description="Approved crypto asset universe (agent-safe set).",
+        access="auth",
+        parameters=[
+            ToolParam(name="min_score", type="number", required=False, description="Optional quality threshold"),
+            ToolParam(name="limit", type="integer", required=False, description="Max results (default 100)"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_asset(symbol: str, api_key: str = "") -> str:
+        """Single-asset detail (score, approval state, metadata).
+
+        More focused than get_market_data — returns the MangroveAI
+        approval/score/categorization rather than price/volume.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangroveai_client
+            return json.dumps(_dump(mangroveai_client().crypto_assets.get(symbol)))
+        except Exception as e:  # noqa: BLE001
+            return _err("CRYPTO_GET_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_asset",
+        description="Single-asset metadata + score + approval state.",
+        access="auth",
+        parameters=[
+            ToolParam(name="symbol", type="string", required=True, description="Asset symbol (e.g. BTC, ETH)"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_global_market(api_key: str = "") -> str:
+        """Global market overview (total market cap, BTC dominance, 24h change).
+
+        Context tool — useful when the agent wants to ground a
+        "market regime" observation before recommending strategies.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangroveai_client
+            return json.dumps(_dump(mangroveai_client().crypto_assets.get_global_market()))
+        except Exception as e:  # noqa: BLE001
+            return _err("CRYPTO_GLOBAL_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_global_market",
+        description="Global market overview (total cap, BTC dominance, 24h change).",
+        access="auth",
+        parameters=[_APIKEY],
+    ))
+
 
 # ---------------------------------------------------------------------------
 # Signals (auth)
@@ -507,6 +1029,503 @@ def _register_signals(server: FastMCP) -> None:
             ToolParam(name="category", type="string", required=False, description="Filter by category"),
             ToolParam(name="search", type="string", required=False, description="Search query"),
             ToolParam(name="limit", type="integer", required=False, description="Max results"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_signal(signal_name: str, api_key: str = "") -> str:
+        """Fetch a single signal's full metadata (params, description, category).
+
+        More detail than list_signals for a single name. Useful when the
+        agent knows which signal it wants but needs the parameter schema
+        before writing a strategy rule.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangroveai_client
+            return json.dumps(_dump(mangroveai_client().signals.get(signal_name)))
+        except Exception as e:  # noqa: BLE001
+            return _err("SIGNAL_GET_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_signal",
+        description="Fetch a single signal's full metadata + param schema.",
+        access="auth",
+        parameters=[
+            ToolParam(name="signal_name", type="string", required=True, description="Exact signal name (e.g. 'rsi_cross_up')"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def match_signals(
+        description: str, top_k: int = 5,
+        similarity_threshold: float = 0.5,
+        api_key: str = "",
+    ) -> str:
+        """Semantic match: find signals matching a natural-language description.
+
+        Backs /create-strategy Phase C: the agent has a user idea
+        ('bullish momentum on liquid crypto'), calls this to find
+        candidate signals, then falls through to kb_search for
+        parameter guidance. Higher-quality than text search over
+        signal names.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangroveai_client
+            r = mangroveai_client().signals.match(
+                description=description, top_k=top_k,
+                similarity_threshold=similarity_threshold,
+            )
+            return json.dumps(_dump(r))
+        except Exception as e:  # noqa: BLE001
+            return _err("SIGNAL_MATCH_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="match_signals",
+        description="Semantic match of signals against a natural-language description.",
+        access="auth",
+        parameters=[
+            ToolParam(name="description", type="string", required=True, description="Natural-language description of what you want"),
+            ToolParam(name="top_k", type="integer", required=False, description="Max results (default 5)"),
+            ToolParam(name="similarity_threshold", type="number", required=False, description="Min similarity (default 0.5)"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def search_signals(query: str, limit: int = 50, offset: int = 0,
+                             api_key: str = "") -> str:
+        """Text search over signals (complements list_signals's exhaustive iteration).
+
+        list_signals paginates the full catalog; search_signals filters
+        by a text query server-side. Prefer match_signals for
+        description-level intent; use this for name / keyword search.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from mangroveai.models import SearchSignalsRequest
+
+            from src.shared.clients.mangrove import mangroveai_client
+            req = SearchSignalsRequest(query=query, limit=limit, offset=offset)
+            page = mangroveai_client().signals.search(req)
+            items = [_dump(s) for s in getattr(page, "items", [])]
+            return json.dumps({
+                "items": items,
+                "total": getattr(page, "total", len(items)),
+                "limit": limit, "offset": offset,
+            })
+        except Exception as e:  # noqa: BLE001
+            return _err("SIGNAL_SEARCH_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="search_signals",
+        description="Text search signals (keyword/name). For intent-based matching, prefer match_signals.",
+        access="auth",
+        parameters=[
+            ToolParam(name="query", type="string", required=True, description="Text query"),
+            ToolParam(name="limit", type="integer", required=False, description="Page size (default 50)"),
+            ToolParam(name="offset", type="integer", required=False, description="Page offset"),
+            _APIKEY,
+        ],
+    ))
+
+
+# ---------------------------------------------------------------------------
+# On-chain intelligence (auth)
+# ---------------------------------------------------------------------------
+
+
+def _register_on_chain(server: FastMCP) -> None:
+    """Whale activity, smart-money sentiment, token holders, exchange flows.
+
+    These tools back the /create-strategy skill's "cite Mangrove
+    intelligence" rule — they provide the 'why now' evidence for a
+    candidate strategy.
+    """
+    from src.shared.clients.mangrove import mangroveai_client
+
+    @server.tool()
+    async def get_whale_activity(
+        symbol: str, hours_back: int = 24, api_key: str = "",
+    ) -> str:
+        """Whale buying/selling activity for an asset over the last N hours."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            r = mangroveai_client().on_chain.get_whale_activity(
+                symbol=symbol, hours_back=hours_back,
+            )
+            return json.dumps(_dump(r))
+        except Exception as e:  # noqa: BLE001
+            return _err("ONCHAIN_WHALE_ACTIVITY_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_whale_activity",
+        description="Whale buying/selling activity for an asset.",
+        access="auth",
+        parameters=[
+            ToolParam(name="symbol", type="string", required=True, description="Asset symbol (e.g. ETH)"),
+            ToolParam(name="hours_back", type="integer", required=False, description="Window (default 24)"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_whale_transactions(
+        symbol: str | None = None, min_value: float = 500_000,
+        hours_back: int = 24, api_key: str = "",
+    ) -> str:
+        """Individual whale transactions above min_value USD."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            kwargs: dict[str, Any] = {
+                "min_value": min_value, "hours_back": hours_back,
+            }
+            if symbol is not None:
+                kwargs["symbol"] = symbol
+            r = mangroveai_client().on_chain.get_whale_transactions(**kwargs)
+            return json.dumps(_dump(r))
+        except Exception as e:  # noqa: BLE001
+            return _err("ONCHAIN_WHALE_TXS_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_whale_transactions",
+        description="Whale transactions above a USD threshold.",
+        access="auth",
+        parameters=[
+            ToolParam(name="symbol", type="string", required=False, description="Optional filter by asset"),
+            ToolParam(name="min_value", type="number", required=False, description="Min USD value (default 500000)"),
+            ToolParam(name="hours_back", type="integer", required=False, description="Window (default 24)"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_smart_money_sentiment(
+        symbol: str, chain: str | None = None, api_key: str = "",
+    ) -> str:
+        """Smart-money wallet sentiment for an asset (bullish/bearish signal).
+
+        ⚠️ Upstream netflow data is currently unavailable for most
+        assets on ethereum — real calls return 404 RESOURCE_NOT_FOUND
+        with a clear 'No Smart Money netflow data found' message.
+        Tool wiring is correct; upstream data pipeline issue.
+        Pair this with get_whale_activity / get_exchange_flows while
+        the data source is being populated.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            kwargs: dict[str, Any] = {"symbol": symbol}
+            if chain is not None:
+                kwargs["chain"] = chain
+            r = mangroveai_client().on_chain.get_smart_money_sentiment(**kwargs)
+            return json.dumps(_dump(r))
+        except Exception as e:  # noqa: BLE001
+            return _err("ONCHAIN_SMART_MONEY_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_smart_money_sentiment",
+        description="Smart-money sentiment for an asset (aggregate of tracked wallets).",
+        access="auth",
+        parameters=[
+            ToolParam(name="symbol", type="string", required=True, description="Asset symbol"),
+            ToolParam(name="chain", type="string", required=False, description="Optional chain filter"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def screen_smart_money(
+        chains: list[str] | None = None, timeframe: str = "24h",
+        limit: int = 20, api_key: str = "",
+    ) -> str:
+        """Discover which assets smart money is currently accumulating."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            kwargs: dict[str, Any] = {"timeframe": timeframe, "limit": limit}
+            if chains is not None:
+                kwargs["chains"] = chains
+            r = mangroveai_client().on_chain.screen_smart_money(**kwargs)
+            return json.dumps(_dump(r))
+        except Exception as e:  # noqa: BLE001
+            return _err("ONCHAIN_SMART_MONEY_SCREEN_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="screen_smart_money",
+        description="Screen assets smart money is currently accumulating.",
+        access="auth",
+        parameters=[
+            ToolParam(name="chains", type="array", required=False, description="Optional list of chain names"),
+            ToolParam(name="timeframe", type="string", required=False, description="Lookback (default '24h')"),
+            ToolParam(name="limit", type="integer", required=False, description="Max results (default 20)"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_token_holders(symbol: str, api_key: str = "") -> str:
+        """Top holders + distribution metrics for a token."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            r = mangroveai_client().on_chain.get_token_holders(symbol=symbol)
+            return json.dumps(_dump(r))
+        except Exception as e:  # noqa: BLE001
+            return _err("ONCHAIN_HOLDERS_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_token_holders",
+        description="Top holders + distribution for a token.",
+        access="auth",
+        parameters=[
+            ToolParam(name="symbol", type="string", required=True, description="Asset symbol"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_exchange_flows(
+        symbol: str | None = None, hours_back: int = 24, api_key: str = "",
+    ) -> str:
+        """Net exchange inflows / outflows (risk-off vs risk-on proxy).
+
+        Inflows to exchanges ≈ selling pressure; outflows ≈ accumulation.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            kwargs: dict[str, Any] = {"hours_back": hours_back}
+            if symbol is not None:
+                kwargs["symbol"] = symbol
+            r = mangroveai_client().on_chain.get_exchange_flows(**kwargs)
+            return json.dumps(_dump(r))
+        except Exception as e:  # noqa: BLE001
+            return _err("ONCHAIN_EXCHANGE_FLOWS_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_exchange_flows",
+        description="Net exchange inflows/outflows (selling pressure vs accumulation).",
+        access="auth",
+        parameters=[
+            ToolParam(name="symbol", type="string", required=False, description="Optional filter by asset"),
+            ToolParam(name="hours_back", type="integer", required=False, description="Window (default 24)"),
+            _APIKEY,
+        ],
+    ))
+
+
+# ---------------------------------------------------------------------------
+# DeFi (auth)
+# ---------------------------------------------------------------------------
+
+
+def _register_defi(server: FastMCP) -> None:
+    """Macro DeFi metrics (TVL, stablecoin supply)."""
+    from src.shared.clients.mangrove import mangroveai_client
+
+    @server.tool()
+    async def get_chain_tvl(chain: str, api_key: str = "") -> str:
+        """Total value locked in DeFi on a given chain."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            return json.dumps(_dump(mangroveai_client().defi.get_chain_tvl(chain=chain)))
+        except Exception as e:  # noqa: BLE001
+            return _err("DEFI_CHAIN_TVL_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_chain_tvl",
+        description="Total value locked (TVL) in DeFi on a given chain.",
+        access="auth",
+        parameters=[
+            ToolParam(name="chain", type="string", required=True, description="Chain (e.g. 'base', 'ethereum')"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_protocol_tvl(protocol: str, api_key: str = "") -> str:
+        """Total value locked in a specific DeFi protocol."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            return json.dumps(_dump(mangroveai_client().defi.get_protocol_tvl(protocol=protocol)))
+        except Exception as e:  # noqa: BLE001
+            return _err("DEFI_PROTOCOL_TVL_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_protocol_tvl",
+        description="TVL for a specific DeFi protocol (e.g. 'aave', 'uniswap').",
+        access="auth",
+        parameters=[
+            ToolParam(name="protocol", type="string", required=True, description="Protocol slug"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_stablecoin_metrics(api_key: str = "") -> str:
+        """Stablecoin supply + flow metrics (macro liquidity proxy)."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            return json.dumps(_dump(mangroveai_client().defi.get_stablecoin_metrics()))
+        except Exception as e:  # noqa: BLE001
+            return _err("DEFI_STABLECOIN_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_stablecoin_metrics",
+        description="Stablecoin supply + flow metrics (macro liquidity proxy).",
+        access="auth",
+        parameters=[_APIKEY],
+    ))
+
+
+# ---------------------------------------------------------------------------
+# Social (auth)
+# ---------------------------------------------------------------------------
+
+
+def _register_social(server: FastMCP) -> None:
+    """Twitter/X sentiment + influence + mentions. Experimental context."""
+    from src.shared.clients.mangrove import mangroveai_client
+
+    @server.tool()
+    async def get_sentiment(
+        topic: str, hours_back: int = 24, api_key: str = "",
+    ) -> str:
+        """Aggregate social sentiment for a topic (asset symbol or keyword)."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            r = mangroveai_client().social.get_sentiment(topic=topic, hours_back=hours_back)
+            return json.dumps(_dump(r))
+        except Exception as e:  # noqa: BLE001
+            return _err("SOCIAL_SENTIMENT_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_sentiment",
+        description="Aggregate social (X/Twitter) sentiment for a topic or asset.",
+        access="auth",
+        parameters=[
+            ToolParam(name="topic", type="string", required=True, description="Asset symbol or keyword"),
+            ToolParam(name="hours_back", type="integer", required=False, description="Window (default 24)"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_mentions(
+        topic: str, hours_back: int = 24, limit: int = 20, api_key: str = "",
+    ) -> str:
+        """Recent social mentions of a topic (raw posts)."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            r = mangroveai_client().social.get_mentions(
+                topic=topic, hours_back=hours_back, limit=limit,
+            )
+            return json.dumps(_dump(r))
+        except Exception as e:  # noqa: BLE001
+            return _err("SOCIAL_MENTIONS_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_mentions",
+        description="Recent social mentions of a topic (raw posts).",
+        access="auth",
+        parameters=[
+            ToolParam(name="topic", type="string", required=True, description="Asset symbol or keyword"),
+            ToolParam(name="hours_back", type="integer", required=False, description="Window (default 24)"),
+            ToolParam(name="limit", type="integer", required=False, description="Max posts (default 20)"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_influence_score(username: str, api_key: str = "") -> str:
+        """Influence score for a social username."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            r = mangroveai_client().social.get_influence_score(username=username)
+            return json.dumps(_dump(r))
+        except Exception as e:  # noqa: BLE001
+            return _err("SOCIAL_INFLUENCE_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_influence_score",
+        description="Influence score for a social username.",
+        access="auth",
+        parameters=[
+            ToolParam(name="username", type="string", required=True, description="Social username (no @)"),
+            _APIKEY,
+        ],
+    ))
+
+
+# ---------------------------------------------------------------------------
+# Docs (auth)
+# ---------------------------------------------------------------------------
+
+
+def _register_docs(server: FastMCP) -> None:
+    """MangroveAI developer docs (API reference + guides)."""
+    from src.shared.clients.mangrove import mangroveai_client
+
+    @server.tool()
+    async def list_docs(api_key: str = "") -> str:
+        """List MangroveAI developer docs.
+
+        ⚠️ Upstream returns 404 'Documentation directory not found'
+        as of 2026-04-23. Tool wiring is correct; upstream docs
+        directory is either missing or mis-configured server-side.
+        Falls through cleanly if the docs come back online.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            items = mangroveai_client().docs.list()
+            return json.dumps([_dump(i) for i in items])
+        except Exception as e:  # noqa: BLE001
+            return _err("DOCS_LIST_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="list_docs",
+        description="List MangroveAI developer docs (API reference + guides).",
+        access="auth",
+        parameters=[_APIKEY],
+    ))
+
+    @server.tool()
+    async def get_doc_content(path: str, api_key: str = "") -> str:
+        """Fetch a MangroveAI doc by path.
+
+        Different from kb_get_document (KB content DB). This hits the
+        MangroveAI developer documentation — API reference, SDK migration
+        guides, etc.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            return json.dumps(_dump(mangroveai_client().docs.get_content(path=path)))
+        except Exception as e:  # noqa: BLE001
+            return _err("DOCS_GET_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_doc_content",
+        description="Fetch a MangroveAI developer doc by path (API reference, guides).",
+        access="auth",
+        parameters=[
+            ToolParam(name="path", type="string", required=True, description="Doc path (from list_docs)"),
             _APIKEY,
         ],
     ))
@@ -863,6 +1882,151 @@ def _register_strategy(server: FastMCP) -> None:
         ],
     ))
 
+    @server.tool()
+    async def list_account_positions(
+        account_id: str | None = None,
+        status: str | None = None,
+        skip: int = 0, limit: int = 100,
+        api_key: str = "",
+    ) -> str:
+        """List positions on MangroveAI's execution side.
+
+        Hits `mangroveai.execution.list_positions`. Note: our
+        architecture executes trades locally via order_executor and
+        writes to our own SQLite trades/evaluations — so our user's
+        strategies don't populate MangroveAI execution accounts
+        unless a strategy was authored through the MangroveAI copilot
+        path. This tool is exposed for completeness + cases where a
+        user has both app-in-a-box AND copilot-authored strategies.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangroveai_client
+            kwargs: dict[str, Any] = {"skip": skip, "limit": limit}
+            if account_id is not None:
+                kwargs["account_id"] = account_id
+            if status is not None:
+                kwargs["status"] = status
+            items = mangroveai_client().execution.list_positions(**kwargs)
+            return json.dumps([_dump(i) for i in items])
+        except Exception as e:  # noqa: BLE001
+            return _err("EXECUTION_POSITIONS_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="list_account_positions",
+        description="List positions on MangroveAI's execution side (copilot-authored strategies).",
+        access="auth",
+        parameters=[
+            ToolParam(name="account_id", type="string", required=False, description="Optional filter"),
+            ToolParam(name="status", type="string", required=False, description="Optional: open | closed | etc"),
+            ToolParam(name="skip", type="integer", required=False, description="Page offset"),
+            ToolParam(name="limit", type="integer", required=False, description="Page size"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_account_position(position_id: str, api_key: str = "") -> str:
+        """Fetch a single MangroveAI execution-side position by id."""
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangroveai_client
+            return json.dumps(_dump(mangroveai_client().execution.get_position(position_id)))
+        except Exception as e:  # noqa: BLE001
+            return _err("EXECUTION_POSITION_GET_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_account_position",
+        description="Fetch a single MangroveAI execution position.",
+        access="auth",
+        parameters=[
+            ToolParam(name="position_id", type="string", required=True, description="Position id"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def list_account_trades(
+        account_id: str | None = None,
+        asset: str | None = None,
+        outcome: str | None = None,
+        skip: int = 0, limit: int = 100,
+        api_key: str = "",
+    ) -> str:
+        """List trades on MangroveAI's execution side.
+
+        Distinct from our local `list_trades` (which covers every
+        DEX swap the agent executed, stored in our SQLite). This
+        hits MangroveAI's copilot-execution trade log — different
+        data source, different use case.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangroveai_client
+            kwargs: dict[str, Any] = {"skip": skip, "limit": limit}
+            if account_id is not None:
+                kwargs["account_id"] = account_id
+            if asset is not None:
+                kwargs["asset"] = asset
+            if outcome is not None:
+                kwargs["outcome"] = outcome
+            items = mangroveai_client().execution.list_trades(**kwargs)
+            return json.dumps([_dump(i) for i in items])
+        except Exception as e:  # noqa: BLE001
+            return _err("EXECUTION_TRADES_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="list_account_trades",
+        description="List trades on MangroveAI's execution side (copilot-authored strategies).",
+        access="auth",
+        parameters=[
+            ToolParam(name="account_id", type="string", required=False, description="Optional filter"),
+            ToolParam(name="asset", type="string", required=False, description="Optional asset filter"),
+            ToolParam(name="outcome", type="string", required=False, description="Optional outcome filter"),
+            ToolParam(name="skip", type="integer", required=False, description="Page offset"),
+            ToolParam(name="limit", type="integer", required=False, description="Page size"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def delete_strategy(strategy_id: str, api_key: str = "") -> str:
+        """Delete a strategy upstream on MangroveAI.
+
+        Workshop attendees create throwaway strategies and will want
+        to clean up. This hits mangroveai.strategies.delete — the
+        upstream strategy row is removed. Our LOCAL SQLite cache of
+        the strategy stays; the local row is harmless once the
+        upstream is gone, and we'd prefer to preserve the audit
+        trail for any trades/evaluations that referenced it.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.services.strategy_service import get_strategy
+            from src.shared.clients.mangrove import mangroveai_client
+            # Look up the mangrove_id from our local cache.
+            detail = get_strategy(strategy_id)
+            r = mangroveai_client().strategies.delete(detail.mangrove_id)
+            return json.dumps(_dump(r))
+        except AgentError as e:
+            return _handle_agent_error(e)
+        except Exception as e:  # noqa: BLE001
+            return _err("STRATEGY_DELETE_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="delete_strategy",
+        description="Delete a strategy upstream (local audit trail preserved).",
+        access="auth",
+        parameters=[
+            ToolParam(name="strategy_id", type="string", required=True, description="Agent (local) strategy UUID"),
+            _APIKEY,
+        ],
+    ))
+
 
 # ---------------------------------------------------------------------------
 # Logs (auth)
@@ -962,6 +2126,116 @@ def _register_kb(server: FastMCP) -> None:
             ToolParam(name="limit", type="integer", required=False, description="Max results"),
             _APIKEY,
         ],
+    ))
+
+    @server.tool()
+    async def kb_glossary_get(term: str, api_key: str = "") -> str:
+        """Look up a single glossary term (definition + backlinks).
+
+        Cheaper + more focused than kb_search when the agent already
+        knows the exact term it wants. Backlinks field shows related
+        indicators and documents.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        from src.shared.clients.mangrove import mangroveai_client
+        try:
+            return json.dumps(_dump(mangroveai_client().kb.glossary.get(term)))
+        except Exception as e:  # noqa: BLE001
+            return _err("KB_GLOSSARY_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="kb_glossary_get",
+        description="Look up a KB glossary term (definition + backlinks).",
+        access="auth",
+        parameters=[
+            ToolParam(name="term", type="string", required=True, description="Glossary term (exact match)"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def kb_get_document(slug: str, api_key: str = "") -> str:
+        """Fetch a full KB document by slug.
+
+        Use when kb_search surfaces a document and the agent needs the
+        full body (not just the search snippet). Real documents run
+        up to ~25k chars — use sparingly and cite specific sections.
+
+        Response field: body lives under `content` (not `body`).
+        """
+        if not _require(api_key):
+            return _auth_error()
+        from src.shared.clients.mangrove import mangroveai_client
+        try:
+            return json.dumps(_dump(mangroveai_client().kb.documents.get(slug)))
+        except Exception as e:  # noqa: BLE001
+            return _err("KB_DOCUMENT_NOT_FOUND", str(e))
+
+    register_tool(ToolEntry(
+        name="kb_get_document",
+        description="Fetch a KB document by slug (full body, not search snippet).",
+        access="auth",
+        parameters=[
+            ToolParam(name="slug", type="string", required=True, description="Document slug (e.g. 'momentum-strategies')"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def kb_list_indicators(
+        category: str | None = None, api_key: str = "",
+    ) -> str:
+        """List KB indicator docs. Optionally filter by category.
+
+        Useful for the /create-strategy skill's Phase C: agent picks
+        a signal from list_signals, then calls this to find the KB
+        docs explaining that indicator family.
+
+        Category values are TITLE-CASE. Known values (as of 2026-04-23,
+        70 indicators total):
+            "Patterns"   (27)   "Trend"       (15)
+            "Momentum"   (11)   "Volume"       (9)
+            "Volatility"  (5)   "Returns"      (3)
+        Lowercase (e.g. "momentum") returns empty.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        from src.shared.clients.mangrove import mangroveai_client
+        kwargs: dict[str, Any] = {}
+        if category is not None:
+            kwargs["category"] = category
+        try:
+            return json.dumps([_dump(i) for i in mangroveai_client().kb.indicators.list(**kwargs)])
+        except Exception as e:  # noqa: BLE001
+            return _err("KB_INDICATORS_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="kb_list_indicators",
+        description="List KB indicator docs (optionally by category).",
+        access="auth",
+        parameters=[
+            ToolParam(name="category", type="string", required=False, description="Filter: momentum | trend | mean_reversion | volatility | volume | pattern"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def kb_list_tags(api_key: str = "") -> str:
+        """List all KB tags — useful for navigation or kb_search filtering."""
+        if not _require(api_key):
+            return _auth_error()
+        from src.shared.clients.mangrove import mangroveai_client
+        try:
+            return json.dumps([_dump(t) for t in mangroveai_client().kb.tags.list()])
+        except Exception as e:  # noqa: BLE001
+            return _err("KB_TAGS_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="kb_list_tags",
+        description="List KB tags (navigation + kb_search filtering).",
+        access="auth",
+        parameters=[_APIKEY],
     ))
 
 

@@ -139,26 +139,59 @@ Once a wallet exists (either imported or created and confirmed-backed-up via `co
 
 ## Stage 3 — Review backtest
 
-- Present the **winning strategy** and 1–2 runners-up:
-  - Entry / exit signals (by name) + KB citation for each
-  - Key metrics: total return, Sharpe, max drawdown, win rate, trade count
-  - Ranked rationale: why this one won
+Detailed review flow (thresholds, PASS/FAIL decision rule, no-fabrication rule) lives in the `/create-strategy` skill's **Phase F**. Load and follow that.
+
+High-level summary for orientation:
+- Present the winning strategy + 1–2 runners-up with signal names, KB citations, and metrics
+- Verdict against 6 thresholds from `server/src/services/data/threshold_spec.json` (sortino ≥ 1.5, sharpe ≥ 1.2, calmar ≥ 1.0, irr ≥ 0.15, max_drawdown ≤ 0.7, win_rate ≥ 0.25)
+- Never invent missing metrics — if `total_trades == 0`, report as INSUFFICIENT_TRADES
 - Ask: "Promote to paper, iterate the goal, or reject?"
 
 ## Stage 4 — Paper
 
-- On approval, `update_strategy_status` with `status="paper"`.
+- On approval, `update_strategy_status(strategy_id, status="paper")`.
+- Paper promotion is **unrestricted** — no allocation, no backup check, no confirm flag required. Paper evaluations simulate fills at current market price; no real funds move.
 - Confirm the cron job registered (`status.active_cron_jobs` increments).
 - Tell the user: "Paper running. Will evaluate every {timeframe}. Check `list_evaluations` anytime."
 
 ## Stage 5 — Promote to live
 
-- After the user is satisfied with paper evaluations, prompt for live promotion.
-- **Precondition check:** the allocation's wallet must have `backup_confirmed_at` set. If it's null (wallet not backed up), tell the user:
-  > "This wallet's secret isn't confirmed backed-up yet. Run `./scripts/reveal-secret.sh --address {addr}` to see the secret, save it, then `./scripts/confirm-backup.sh {addr}` to unlock live trading. I can't execute live trades without this."
-- Gather the allocation block: wallet address, cap (absolute USD or % of balance), slippage tolerance, venue preference (default 1inch).
-- Call `update_strategy_status` with `status="live"`, `confirm=true`, `allocation={...}`.
-- Confirm live cron running. Executor routes firing evaluations through 1inch via `mangrovemarkets`.
+Live promotion is gated — it's the moment real money starts moving through the bot. Four things must be true at call time:
+
+**1. User has actively asked for live.**
+Do not auto-promote. The user says "go live" / "activate with real funds" / equivalent.
+
+**2. Target wallet has `backup_confirmed_at` set.**
+Check via `list_wallets`. If null, refuse the promotion and redirect:
+> "This wallet's secret isn't confirmed backed-up yet. Run `./scripts/reveal-secret.sh --address {addr}` to see the secret, save it, then `./scripts/confirm-backup.sh {addr}` to unlock live trading. I can't execute live trades without this."
+
+**3. Allocation block is complete.**
+Gather from the user:
+- `wallet_address` (must match one of `list_wallets`)
+- `token` + `token_address` (usually USDC — pre-fill the standard mainnet address unless user specifies otherwise)
+- `amount` — **capped at 10–20% of the wallet's balance for the first live allocation on this wallet, regardless of backtest numbers.** Per ai_copilot's "small first allocation" principle. If the user insists on more, push back once: "First live allocation on a new wallet is capped conservatively — you can scale up after you've seen a few real executions."
+- `slippage_pct` — REQUIRED, DECIMAL (0.005 = 0.5%), **max 0.0025 (0.25%)** per the Pydantic validator. Pitch 0.001-0.002 for liquid pairs (USDC/ETH, USDC/BTC on Base), 0.002-0.0025 for less liquid. Never ask "what slippage do you want?" cold — propose a value based on the pair and let the user confirm or adjust.
+
+**4. `confirm=true` is set on the update_status call.**
+The Pydantic validator rejects live-promotion without it.
+
+Call shape:
+```
+update_strategy_status(
+    strategy_id=...,
+    status="live",
+    confirm=true,
+    allocation={
+        "wallet_address": "0x...",
+        "token": "USDC",
+        "token_address": "0x...",
+        "amount": ...,
+        "slippage_pct": 0.002,   # decimal, ≤ 0.0025
+    },
+)
+```
+
+Confirm live cron running (`status.active_cron_jobs` incremented). Executor routes firing evaluations through 1inch via `mangrovemarkets`. Cron-fired swaps use the allocation's `slippage_pct` — no fallback, no silent defaults.
 
 ## Stage 6 — Monitor
 

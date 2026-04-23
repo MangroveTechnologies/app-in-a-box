@@ -707,6 +707,113 @@ def _register_dex(server: FastMCP) -> None:
         ],
     ))
 
+    @server.tool()
+    async def get_token_search(
+        chain_id: int, query: str, api_key: str = "",
+    ) -> str:
+        """Fuzzy-search tokens by symbol or partial name.
+
+        Lets the agent resolve a symbol the user typed into a concrete
+        contract address. Pairs with the other DEX tools that need
+        addresses (get_spot_price, get_quote with address inputs, etc).
+        Current workaround for the broken get_token_info.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            results = mangrovemarkets_client().dex.token_search(
+                chain_id=chain_id, query=query,
+            )
+            return json.dumps([_dump(r) for r in results])
+        except Exception as e:  # noqa: BLE001
+            return _err("DEX_TOKEN_SEARCH_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_token_search",
+        description="Fuzzy token search by symbol / partial name. Returns candidate contract addresses.",
+        access="auth",
+        parameters=[
+            ToolParam(name="chain_id", type="integer", required=True, description="EVM chain id"),
+            ToolParam(name="query", type="string", required=True, description="Symbol or partial name (e.g. 'USDC', 'Pepe')"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_dex_chart(
+        chain_id: int, token0: str, token1: str, period: str = "1h",
+        api_key: str = "",
+    ) -> str:
+        """OHLC chart candles for a token pair on a DEX.
+
+        ⚠️ CURRENTLY BROKEN upstream. The mangrovemarkets SDK's
+        chart() wrapper sends token0/token1 fields but the upstream
+        1inch chart tool requires an `address` field. Every real
+        call returns DEX_CHART_FAILED with a validation error.
+        Fall back to get_ohlcv (CEX-aggregated from MangroveAI) for
+        price history until this is fixed.
+
+        Different from get_ohlcv: that one hits MangroveAI's
+        CEX-aggregated crypto_assets data; this one (when fixed)
+        pulls DEX-native candles for a specific on-chain pair.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            result = mangrovemarkets_client().dex.chart(
+                chain_id=chain_id, token0=token0, token1=token1, period=period,
+            )
+            return json.dumps([_dump(c) for c in result])
+        except Exception as e:  # noqa: BLE001
+            return _err("DEX_CHART_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_dex_chart",
+        description="⚠️ BROKEN upstream (SDK sends token0/token1, server wants `address`). Use get_ohlcv for price history until fixed.",
+        access="auth",
+        parameters=[
+            ToolParam(name="chain_id", type="integer", required=True, description="EVM chain id"),
+            ToolParam(name="token0", type="string", required=True, description="Base token (symbol or address)"),
+            ToolParam(name="token1", type="string", required=True, description="Quote token (symbol or address)"),
+            ToolParam(name="period", type="string", required=False, description="Bar period (default '1h')"),
+            _APIKEY,
+        ],
+    ))
+
+    @server.tool()
+    async def get_allowances(
+        chain_id: int, wallet: str, spender: str, api_key: str = "",
+    ) -> str:
+        """ERC-20 allowance check — has the wallet approved `spender`?
+
+        Debugging / pre-approval check before execute_swap. Useful to
+        diagnose "my swap keeps failing" — often an expired approval.
+        """
+        if not _require(api_key):
+            return _auth_error()
+        try:
+            from src.shared.clients.mangrove import mangrovemarkets_client
+            result = mangrovemarkets_client().dex.allowances(
+                chain_id=chain_id, wallet=wallet, spender=spender,
+            )
+            return json.dumps(_dump(result))
+        except Exception as e:  # noqa: BLE001
+            return _err("DEX_ALLOWANCES_FAILED", str(e))
+
+    register_tool(ToolEntry(
+        name="get_allowances",
+        description="Check ERC-20 allowances a wallet has granted a spender (approve_token output).",
+        access="auth",
+        parameters=[
+            ToolParam(name="chain_id", type="integer", required=True, description="EVM chain id"),
+            ToolParam(name="wallet", type="string", required=True, description="Wallet address"),
+            ToolParam(name="spender", type="string", required=True, description="Spender contract address (e.g. a router)"),
+            _APIKEY,
+        ],
+    ))
+
 
 # ---------------------------------------------------------------------------
 # Market data (auth)

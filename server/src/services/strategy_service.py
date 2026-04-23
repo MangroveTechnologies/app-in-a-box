@@ -88,6 +88,16 @@ class StrategyAllocationInput(BaseModel):
     token: str  # symbol like "USDC"
     token_address: str
     amount: float
+    # Per-allocation slippage tolerance as DECIMAL (0.005 = 0.5%).
+    # REQUIRED — picking a tolerance is a risk decision the user must
+    # make explicitly when committing funds to a live strategy.
+    # Capped at 0.0025 (0.25%); anything higher is rejected at the
+    # API boundary. Matches the decimal convention used for direct
+    # swap slippage_pct (server/src/api/routes/dex.py SwapRequest).
+    slippage_pct: float = Field(..., gt=0, le=0.0025, description=(
+        "Slippage tolerance as DECIMAL (0.005 = 0.5%). Max 0.0025 (0.25%). "
+        "No default — must be set at allocation time."
+    ))
 
 
 class StrategyStatusUpdate(BaseModel):
@@ -408,6 +418,7 @@ def update_status(strategy_id: str, update: StrategyStatusUpdate) -> StrategyDet
             token_address=update.allocation.token_address,
             token_symbol=update.allocation.token,
             amount=update.allocation.amount,
+            slippage_pct=update.allocation.slippage_pct,
         )
 
     # Sync status upstream.
@@ -518,10 +529,12 @@ def tick(strategy_id: str) -> None:
         # Find the wallet + chain_id for live execution (allocation provides it).
         wallet_address = None
         chain_id = None
+        slippage_pct = None
         if mode == "live":
             active_alloc = allocation_service.get_active_allocation(strategy_id)
             if active_alloc:
                 wallet_address = active_alloc.wallet_address
+                slippage_pct = active_alloc.slippage_pct
                 # We don't track chain_id on allocation; pull from wallet row.
                 wrow = get_connection().execute(
                     "SELECT chain_id FROM wallets WHERE address = ?",
@@ -550,6 +563,7 @@ def tick(strategy_id: str) -> None:
                 order_intents, mode=mode, strategy_id=strategy_id,
                 evaluation_id=evaluation_id,
                 wallet_address=wallet_address, chain_id=chain_id,
+                slippage_pct=slippage_pct,
             )
 
         _log.info("strategy.tick.completed",

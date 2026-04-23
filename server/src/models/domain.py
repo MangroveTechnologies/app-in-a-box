@@ -113,6 +113,11 @@ class Allocation(BaseModel):
     active: bool
     created_at: datetime
     released_at: datetime | None = None
+    # Per-allocation slippage tolerance (DECIMAL, 0.005 = 0.5%). Capped
+    # at 0.0025 (0.25%) in the Pydantic input layer. Nullable for rows
+    # from pre-migration-004 databases; cron-driven swaps raise on None
+    # rather than silently falling back.
+    slippage_pct: float | None = None
 
 
 def _to_db(value: Any) -> Any:

@@ -143,11 +143,13 @@ def _live_swap(
     wallet_manager.sign(). The SDK sees unsigned tx payloads + signed tx
     hex strings.
 
-    `slippage_pct` is the user's tolerance as a DECIMAL (0.005 = 0.5%,
-    0.01 = 1%). Converted to the upstream's percentage convention
-    (1.0 = 1%) at the `dex.prepare_swap()` boundary. If None, falls back
-    to 0.01 (1%) with a log warning — cron-driven swaps hit this path
-    until slippage_pct is added to the allocation schema.
+    `slippage_pct` is the user's tolerance as a DECIMAL (0.005 = 0.5%).
+    REQUIRED for live swaps — no fallback. Direct swaps supply it via
+    SwapRequest; cron swaps via the active allocation (migration 004
+    added `slippage_pct` to the allocations table). Capped at 0.0025
+    (0.25%) at the input layer; re-checked here as defense-in-depth.
+    Converted to the upstream's percentage convention (1.0 = 1%) at
+    the `dex.prepare_swap()` boundary.
     """
     if chain_id is None:
         raise SigningError(
@@ -156,13 +158,24 @@ def _live_swap(
         )
 
     if slippage_pct is None:
-        slippage_pct = 0.01
-        _log.warning(
-            "order.slippage_fallback",
-            strategy_id=strategy_id,
-            symbol=intent.symbol,
-            fallback_pct=slippage_pct,
-            note="slippage_pct not supplied; using 1% fallback. Add slippage_pct to the allocation block to silence this.",
+        raise SigningError(
+            "slippage_pct is required for live swaps.",
+            suggestion=(
+                "Direct swap callers pass slippage_pct in the request body "
+                "(decimal, e.g. 0.002 = 0.2%). Cron-driven swaps pull it "
+                "from the active allocation — re-promote the strategy to "
+                "live with an allocation block that includes slippage_pct."
+            ),
+        )
+    if slippage_pct <= 0 or slippage_pct > 0.0025:
+        raise SigningError(
+            f"slippage_pct {slippage_pct} outside allowed range (0, 0.0025].",
+            suggestion=(
+                "Max allowed slippage is 0.25% (0.0025 decimal). Tighter "
+                "values trade off fewer fills for better prices; looser "
+                "values are refused to prevent rekt-on-illiquid-pair "
+                "execution."
+            ),
         )
 
     client = mangrovemarkets_client()

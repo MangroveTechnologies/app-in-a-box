@@ -157,7 +157,8 @@ def test_patch_status_requires_confirm_for_live(client):
         headers=_auth(),
         json={"status": "live",
               "allocation": {"wallet_address": "0xabc", "token": "USDC",
-                              "token_address": "0xusdc", "amount": 100}},
+                              "token_address": "0xusdc", "amount": 100,
+                              "slippage_pct": 0.002}},
     )
     assert r.status_code == 400
     assert r.json()["code"] == "CONFIRMATION_REQUIRED"

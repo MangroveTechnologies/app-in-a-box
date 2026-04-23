@@ -214,6 +214,7 @@ def test_status_paper_to_live_requires_confirm(temp_db, mock_ai_sdk):
                 allocation=StrategyAllocationInput(
                     wallet_address="0xabc", token="USDC",
                     token_address="0xusdc", amount=100,
+                    slippage_pct=0.002,
                 ),
             ),
         )
@@ -243,6 +244,7 @@ def test_status_to_live_registers_cron_and_allocation(temp_db, mock_ai_sdk):
             allocation=StrategyAllocationInput(
                 wallet_address="0xabc", token="USDC",
                 token_address="0xusdc", amount=100,
+                slippage_pct=0.002,
             ),
         ),
     )
@@ -277,6 +279,7 @@ def test_deactivating_live_releases_allocation_and_cancels_cron(temp_db, mock_ai
             allocation=StrategyAllocationInput(
                 wallet_address="0xabc", token="USDC",
                 token_address="0xusdc", amount=100,
+                slippage_pct=0.002,
             ),
         ),
     )

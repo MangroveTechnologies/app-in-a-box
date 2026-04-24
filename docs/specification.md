@@ -731,7 +731,7 @@ Client-side configuration example (`.mcp.json` in a Claude Code project):
   "mcpServers": {
     "defi-agent": {
       "transport": "http",
-      "url": "http://localhost:8080/mcp",
+      "url": "http://localhost:9080/mcp",
       "headers": {
         "X-API-Key": "<your-configured-api-key>"
       }
@@ -773,7 +773,7 @@ client = MangroveAI()  # reads env
 **Purpose:** DEX swaps, wallet creation, portfolio analytics.
 
 **Config:**
-- `MANGROVEMARKETS_BASE_URL` — defaults to `http://localhost:8080` (MCP server); set to deployed URL in prod
+- `MANGROVEMARKETS_BASE_URL` — defaults to `http://localhost:9081` (self-hosted placeholder; port chosen to dodge the VSCode Helper squat on :8080); set to deployed URL in prod
 - `MANGROVE_API_KEY` — same key as `mangroveai`
 
 **Usage:**
@@ -871,7 +871,7 @@ x402 keys from the template stay required — payment middleware needs them at s
   "AUTH_ENABLED": true,
   "API_KEY": "local-dev-key",
   "MANGROVE_API_KEY": "dev_...",
-  "MANGROVEMARKETS_BASE_URL": "http://localhost:8080",
+  "MANGROVEMARKETS_BASE_URL": "http://localhost:9081",
   "DB_PATH": "./agent.db",
   "KEYRING_SERVICE_NAME": "defi-agent",
   "MASTER_KEY_ENV_FALLBACK": "",

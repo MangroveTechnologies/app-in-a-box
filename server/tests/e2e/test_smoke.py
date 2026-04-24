@@ -78,7 +78,7 @@ def _stub_sdk() -> MagicMock:
 
     # execution
     sdk.execution.evaluate.return_value = MagicMock(
-        order_intents=[], orders=None,
+        new_orders=None, order_intents=[], orders=None,
         model_dump=MagicMock(return_value={"orders": []}),
     )
 

@@ -26,7 +26,7 @@ cd "$REPO_ROOT"
 CONFIG_FILE="server/src/config/local-config.json"
 VENV_DIR=".venv"
 HOST="${BARE_HOST:-0.0.0.0}"
-PORT="${BARE_PORT:-8080}"
+PORT="${BARE_PORT:-9080}"
 
 GREEN="\033[32m"; RED="\033[31m"; YELLOW="\033[33m"; DIM="\033[2m"; CLR="\033[0m"
 step() { printf "${YELLOW}==>${CLR} %s\n" "$1"; }

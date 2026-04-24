@@ -2,7 +2,7 @@
   "AUTH_ENABLED": true,
   "API_KEYS": "test-key-1,test-key-2",
   "MANGROVE_API_KEY": "test_key_not_used_in_unit_tests",
-  "MANGROVEMARKETS_BASE_URL": "http://localhost:8080",
+  "MANGROVEMARKETS_BASE_URL": "http://localhost:9081",
   "DB_PATH": ":memory:",
   "MASTER_KEY_PATH": "./agent-data-test/master.key",
   "KEYRING_SERVICE_NAME": "defi-agent-test",

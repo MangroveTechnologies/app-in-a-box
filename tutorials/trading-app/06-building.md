@@ -15,7 +15,7 @@ The product owner agent drives implementation using the agent workforce.
 
 - Review and approve when asked
 - Answer questions if the agents need clarification
-- Test the running app periodically: `docker compose up -d --build && curl http://localhost:8080/health`
+- Test the running app periodically: `docker compose up -d --build && curl http://localhost:9080/health`
 
 ## Expected Output
 

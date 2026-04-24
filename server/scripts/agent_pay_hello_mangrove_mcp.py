@@ -7,7 +7,7 @@ with the payment attached via MCP _meta — the same ergonomics as
 x402AsyncTransport on the REST side.
 
 Requirements:
-    - Server running (default: http://127.0.0.1:8080) with the hello_mangrove
+    - Server running (default: http://127.0.0.1:9080) with the hello_mangrove
       tool registered via x402.mcp.create_payment_wrapper, so the 402 response
       shape is what x402MCPSession expects
     - WALLET_SECRET env var with an EVM private key funded on the active
@@ -52,7 +52,7 @@ async def main() -> int:
         print("ERROR: WALLET_SECRET unset. Export an EVM private key.", file=sys.stderr)
         return 1
 
-    base_url = os.environ.get("SERVER_URL", "http://127.0.0.1:8080").rstrip("/")
+    base_url = os.environ.get("SERVER_URL", "http://127.0.0.1:9080").rstrip("/")
     mcp_url = f"{base_url}/mcp/"
     network = os.environ.get("X402_NETWORK", "eip155:8453")
 

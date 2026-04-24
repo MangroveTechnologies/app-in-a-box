@@ -508,11 +508,20 @@ def tick(strategy_id: str) -> None:
                        exception=str(e), duration_ms=duration_ms)
             return
 
-        # Extract OrderIntents from SDK response. The shape varies: modern
-        # SDKs return EvaluateResult.orders or .actions; be defensive.
+        # Extract OrderIntents from SDK response. The shape varies by SDK
+        # / upstream version — be defensive. Current canonical key is
+        # `new_orders` (MangroveAI SDK `EvaluateResult.new_orders` +
+        # upstream `managers/services.py` response payload). Older
+        # variants used `order_intents` or `orders`; keep both as
+        # fallbacks for cross-version compatibility. Missing this key is
+        # a silent data loss: every tick logs an evaluation but zero
+        # orders, which looks like "strategy didn't fire" when in fact
+        # it did.
         raw_orders = (
-            getattr(sdk_resp, "order_intents", None)
+            getattr(sdk_resp, "new_orders", None)
+            or getattr(sdk_resp, "order_intents", None)
             or getattr(sdk_resp, "orders", None)
+            or (sdk_resp.model_dump().get("new_orders") if hasattr(sdk_resp, "model_dump") else None)
             or (sdk_resp.model_dump().get("order_intents") if hasattr(sdk_resp, "model_dump") else None)
             or []
         )

@@ -9,7 +9,7 @@ Contrast with pay_hello_mangrove.py, which is an interactive step-through
 for humans learning the protocol.
 
 Requirements:
-    - Server running (default: http://127.0.0.1:8080)
+    - Server running (default: http://127.0.0.1:9080)
     - WALLET_SECRET env var with an EVM private key funded on the active
       network (~$0.05 USDC + a few cents of ETH for gas on Base mainnet)
 
@@ -47,7 +47,7 @@ async def main() -> int:
         print("ERROR: WALLET_SECRET unset. Export an EVM private key.", file=sys.stderr)
         return 1
 
-    base_url = os.environ.get("SERVER_URL", "http://127.0.0.1:8080")
+    base_url = os.environ.get("SERVER_URL", "http://127.0.0.1:9080")
     account = Account.from_key(secret)
     print(f"Payer address: {account.address}")
     print(f"Server:        {base_url}")

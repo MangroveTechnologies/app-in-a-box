@@ -74,7 +74,7 @@ One-liner orientation: "I'm your local Mangrove-powered trading bot. The strateg
 Run these in order. Each beat is **one tool call + 1–2 sentences of commentary**. The whole tour should fit in a single message if possible.
 
 1. **`status`** — "The bot is alive. Version X, uptime Y, N active cron jobs, DB at `./agent-data/agent.db`."
-2. **`list_tools`** — Do NOT dump all 40. Group them for the user: wallet / market data / swaps / strategies / monitoring / KB. "This is the capability surface."
+2. **`list_tools`** — Do NOT dump all 41. Group them for the user: wallet / market data / swaps / strategies / monitoring / KB. "This is the capability surface."
 3. **`get_market_data`** on a liquid asset (ETH on Base by default) — "This is live price / volume / 24h change, pulled right now from the Mangrove markets API. Every strategy I backtest or evaluate is priced off data like this."
 4. **`kb_search`** on a real trading concept (e.g. `"MACD crossover"`, `"Bollinger squeeze"`, `"mean reversion"`) — "This is the knowledge base. Every strategy recommendation I make cites entries here — no vibes-based suggestions."
 5. **`search_reference_strategies`** with just an asset (e.g. `asset="ETH"`) — "And this is the reference strategy library. When we build something, I search these first so we start from a template that's already been backtested, not a blank slate."

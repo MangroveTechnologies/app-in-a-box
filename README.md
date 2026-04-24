@@ -34,6 +34,16 @@ A local AI trading bot that:
 
 ---
 
+## Workshop attendee? Start here.
+
+The full guided walkthrough lives in **[`tutorials/trading-app/`](tutorials/trading-app/00-index.md)** — 8 chapters that take you from "I just cloned this" to "I have a paper strategy running" to (optionally) "I made a live swap."
+
+Chapters 01–05 are **fund-free**. Chapters 06–08 are optional and need a small amount of USDC. Budget ~2 hours for the whole path.
+
+Not doing the workshop? Keep reading — the rest of this README is a reference.
+
+---
+
 ## Prerequisites
 
 | Tool | Install | Why |
@@ -55,7 +65,7 @@ One command. It seeds your config (prompts for the API key), creates a venv, pip
 ```bash
 git clone https://github.com/MangroveTechnologies/app-in-a-box.git defi-agent
 cd defi-agent
-./setup.sh
+./scripts/setup.sh
 ```
 
 First run takes ~60s (pip install + health wait). Re-runs are idempotent — it detects what's already done and skips.
@@ -65,16 +75,16 @@ When it's finished:
 - `./scripts/verify_quickstart.sh --bare` passed → the tool catalog returned the expected set.
 - Claude Code's MCP registration now knows about `defi-agent`.
 
-**Start Claude Code in the repo directory** and the agent will greet you, walk through the security primer, and ask whether you have an existing wallet to import or want to create a fresh one. See *Your first trade* below.
+**Start Claude Code in the repo directory** and the agent runs a short platform tour (status / tools / market data / knowledge base / reference strategies) to prove everything is wired, then offers to help you build a strategy. You can paper-trade without a wallet at all — wallet setup lives in Chapter 06 of the tutorial, right before live trading. See *Your first trade* below.
 
-### Useful `./setup.sh` flags
+### Useful `./scripts/setup.sh` flags
 
 ```
-./setup.sh --yes --api-key dev_xxx         # fully non-interactive (CI / scripts)
-./setup.sh --foreground                    # run uvicorn in your terminal (Ctrl+C to stop)
-./setup.sh --no-mcp                        # skip Claude Code registration
-./setup.sh --no-verify                     # skip the post-start verify pass
-./setup.sh --docker                        # use Docker instead of bare-metal
+./scripts/setup.sh --yes --api-key dev_xxx         # fully non-interactive (CI / scripts)
+./scripts/setup.sh --foreground                    # run uvicorn in your terminal (Ctrl+C to stop)
+./scripts/setup.sh --no-mcp                        # skip Claude Code registration
+./scripts/setup.sh --no-verify                     # skip the post-start verify pass
+./scripts/setup.sh --docker                        # use Docker instead of bare-metal
 ```
 
 ---
@@ -86,7 +96,7 @@ If you can't run Python on the host (corporate restrictions, reproducibility man
 ```bash
 git clone https://github.com/MangroveTechnologies/app-in-a-box.git defi-agent
 cd defi-agent
-./setup.sh --docker
+./scripts/setup.sh --docker
 ```
 
 State is persisted in the `./agent-data/` directory (bind-mounted into the container). The directory mount avoids the macOS / Windows single-file bind-mount staleness that previously ate DB rows after rebuild.
@@ -95,47 +105,30 @@ State is persisted in the `./agent-data/` directory (bind-mounted into the conta
 
 ## Your first trade
 
-Start Claude Code in the repo directory. The agent auto-runs its first-run greeter: quick introduction, security primer (where your keys live, how imports work, what's gated on backup confirmation), status check, then one question — **existing wallet or fresh one?**
+This section is a fast tour. The full walkthrough is in [`tutorials/trading-app/`](tutorials/trading-app/00-index.md); come back here if you want the shorter reference.
 
-### If you want a fresh wallet
+**Stage 0 — platform tour.** Start Claude Code in the repo directory. The agent runs status, list_tools, get_market_data, kb_search, and search_reference_strategies, and offers to help you build a strategy. No wallet needed yet.
 
-Just say "create a new wallet." The agent calls `create_wallet` with sane defaults (Base mainnet). The response carries a `vault_token` — NOT the plaintext key. The agent will tell you to run the backup command in your VSCode terminal:
+**Paper trading, no wallet.**
 
-```bash
-./scripts/reveal-secret.sh <vault_token>
-```
+> "Build me a momentum strategy for ETH on 1h. Use a reference."
 
-That prints your private key to **the terminal only** (never into the chat). Save it in a password manager / hardware wallet / paper, then tell the agent you've backed it up. The agent will run:
+Agent searches curated reference strategies, picks a candidate, builds it, backtests with a timeframe-appropriate lookback, reports PASS/MARGINAL/FAIL against 6 thresholds.
 
-```bash
-./scripts/confirm-backup.sh <wallet_address>
-```
+> "Promote it to paper."
 
-which unlocks live trading for that wallet. Paper mode works even without the backup confirmation — you can exercise the strategy flow on an unfunded wallet first.
+Schedules the strategy on a cron at the strategy's timeframe. Evaluations fire, paper fills get logged. No funds at risk.
 
-### If you have an existing wallet to import
+**Going live (optional, needs funds).**
 
-The agent will tell you to open your terminal and run:
+Wallet setup and live trading are in Chapters 06 and 07 of the tutorial. The summary:
 
-```bash
-./scripts/stash-secret.sh
-```
-
-It prompts for your key with input hidden (no echo) and prints a short `vault_token`. Come back to Claude Code and say "import wallet vault_token X" — the agent calls `import_wallet` with that id. Your key never passes through the chat, the transcript, or Anthropic's API.
-
-### From there
-
-> "Create an autonomous momentum strategy for ETH on a 4-hour timeframe"
-
-The agent picks 5–10 candidate signal combinations, backtests each over a 3-month window, filters by win-rate and trade count, ranks by IRR, and returns the winner with metrics.
-
-> "Promote that to paper mode"
-
-Registers a cron job at the strategy's timeframe. Every evaluation is logged; check with `list_evaluations`.
-
-> "Go live with a $5 allocation from my wallet"
-
-Requires `backup_confirmed_at` on the wallet — the agent will refuse otherwise with a clear remediation path. When live, evaluations fire at the timeframe cron and any resulting `OrderIntent[]` routes through 1inch via the `mangrovemarkets` SDK.
+- Create or import a wallet via `create_wallet` / `stash-secret.sh` + `import_wallet`.
+- Save the secret via `./scripts/reveal-secret.sh <vault_token>` in your terminal (never in the chat).
+- Run `./scripts/confirm-backup.sh <address>` to flip the backup gate.
+- Fund with 1–5 USDC on Base.
+- Promote the strategy to live with an allocation block (`confirm=true`, `slippage_pct ≤ 0.0025`).
+- Live evaluations fire on the same cron; when the strategy decides to trade, the `mangrovemarkets` SDK routes through 1inch, the agent signs locally, broadcasts, and logs the tx.
 
 ## Safety model at a glance
 
@@ -148,18 +141,20 @@ Requires `backup_confirmed_at` on the wallet — the agent will refuse otherwise
 
 ## What the agent can do
 
-All 23 core MCP tools (plus `hello_mangrove` x402 demo):
+41 MCP tools (plus the `hello_mangrove` x402 demo). Rough grouping:
 
 | Category | Tools |
 |---|---|
-| Discovery (free) | `status`, `list_tools` |
-| Wallet | `create_wallet`, `import_wallet`, `list_wallets`, `get_balances` |
-| DEX | `list_dex_venues`, `get_swap_quote`, `execute_swap` |
-| Market | `get_ohlcv`, `get_market_data` |
-| Signals | `list_signals` |
-| Strategy | `create_strategy_autonomous`, `create_strategy_manual`, `list_strategies`, `get_strategy`, `update_strategy_status`, `backtest_strategy`, `evaluate_strategy` |
+| Discovery (free) | `status`, `list_tools`, `hello_mangrove` |
+| Wallet | `create_wallet`, `import_wallet`, `list_wallets`, `get_balances`, `portfolio_value`, `portfolio_pnl` |
+| DEX | `list_dex_venues`, `get_swap_quote`, `execute_swap`, `get_tx_status`, `get_token_info`, `get_spot_price`, `get_gas_price`, `get_oneinch_chart` |
+| Market / on-chain | `get_ohlcv`, `get_market_data`, `get_crypto_assets`, `get_trending_coins`, `search_crypto_assets`, `get_smart_money_sentiment` |
+| Signals | `list_signals`, `kb_list_indicators` |
+| Strategy | `create_strategy_autonomous`, `create_strategy_manual`, `list_strategies`, `get_strategy`, `update_strategy_status`, `delete_strategy`, `backtest_strategy`, `evaluate_strategy`, `search_reference_strategies`, `build_strategy_from_reference` |
+| Execution | `list_positions`, `get_position`, `list_trade_history` |
 | Logs | `list_evaluations`, `list_trades`, `list_all_trades` |
-| Knowledge Base | `kb_search` |
+| Knowledge Base | `kb_search`, `list_docs`, `get_doc` |
+| DeFi | `get_protocol_tvl` |
 
 Every tool has a mirrored REST endpoint at `/api/v1/agent/*`. Both call the same service layer — pick whichever fits your caller.
 

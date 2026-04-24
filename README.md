@@ -61,7 +61,7 @@ cd defi-agent
 First run takes ~60s (pip install + health wait). Re-runs are idempotent — it detects what's already done and skips.
 
 When it's finished:
-- Agent runs at `http://localhost:8080` (pid in `agent-data/bare.pid`, logs in `agent-data/bare.log`).
+- Agent runs at `http://localhost:9080` (pid in `agent-data/bare.pid`, logs in `agent-data/bare.log`). We bind 9080 externally because `:8080` is commonly squatted by VSCode Helper and other dev tools.
 - `./scripts/verify_quickstart.sh --bare` passed → the tool catalog returned the expected set.
 - Claude Code's MCP registration now knows about `defi-agent`.
 
@@ -174,7 +174,7 @@ Every tool has a mirrored REST endpoint at `/api/v1/agent/*`. Both call the same
 │  Claude Code ─MCP──┐                                        │
 │  Python/curl ─REST─┤                                        │
 │                    ▼                                        │
-│  ┌─ defi-agent (single FastAPI process, port 8080) ──┐     │
+│  ┌─ defi-agent (single FastAPI process, port 9080) ──┐     │
 │  │   • auth middleware (X-API-Key)                   │     │
 │  │   • service layer (one for REST + MCP)            │     │
 │  │   • APScheduler (in-process cron, SQLite jobstore)│     │

@@ -97,6 +97,7 @@ def mock_ai_sdk(monkeypatch):
 
     # execute.evaluate — empty by default
     eval_resp = MagicMock()
+    eval_resp.new_orders = None
     eval_resp.order_intents = []
     eval_resp.orders = None
     eval_resp.model_dump.return_value = {"orders": []}
@@ -302,6 +303,7 @@ def test_tick_paper_mode_logs_simulated_trade(temp_db, mock_ai_sdk, monkeypatch)
 
     # SDK returns one order intent.
     eval_resp = MagicMock()
+    eval_resp.new_orders = None
     eval_resp.order_intents = [
         {"action": "enter", "side": "buy", "symbol": "ETH",
          "amount": 0.1, "reason": "rsi_oversold fired"},

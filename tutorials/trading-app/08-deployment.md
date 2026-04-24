@@ -11,13 +11,13 @@ Deploy the trading app to production.
 docker compose up -d --build
 
 # Verify health
-curl http://localhost:8080/health
+curl http://localhost:9080/health
 
 # Test an endpoint
-curl http://localhost:8080/api/v1/echo -X POST -H "Content-Type: application/json" -d '{"message": "hello"}'
+curl http://localhost:9080/api/v1/echo -X POST -H "Content-Type: application/json" -d '{"message": "hello"}'
 
 # Test auth endpoint
-curl http://localhost:8080/api/v1/marketplace/listings -H "X-API-Key: dev-key-1"
+curl http://localhost:9080/api/v1/marketplace/listings -H "X-API-Key: dev-key-1"
 ```
 
 ## GCP Cloud Run (Optional)

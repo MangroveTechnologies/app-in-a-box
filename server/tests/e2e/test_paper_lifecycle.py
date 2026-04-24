@@ -94,6 +94,7 @@ def client(tmp_path, monkeypatch):
     # The evaluate mock returns an OrderIntent so we exercise the
     # full tick → executor → trade_log path.
     eval_resp = MagicMock()
+    eval_resp.new_orders = None
     eval_resp.order_intents = [
         {"action": "enter", "side": "buy", "symbol": "ETH",
          "amount": 0.01, "reason": "rsi_oversold fired"},

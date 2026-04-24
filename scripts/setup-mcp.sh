@@ -16,7 +16,7 @@
 #   3. server/src/config/local-config.json exists
 #   4. Extract the first value of API_KEYS for the X-API-Key header
 #   5. Remove any existing defi-agent registration (idempotent)
-#   6. Register defi-agent at http://localhost:8080/mcp/ in local scope
+#   6. Register defi-agent at http://localhost:9080/mcp/ in local scope
 #
 # After this: restart Claude Code in the repo directory. Tools load
 # automatically. No approval prompt.
@@ -27,7 +27,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-BASE_URL="${BASE_URL:-http://localhost:8080}"
+BASE_URL="${BASE_URL:-http://localhost:9080}"
 CONFIG_FILE="server/src/config/local-config.json"
 SERVER_NAME="defi-agent"
 
@@ -49,7 +49,7 @@ ok "claude found: $(command -v claude)"
 
 step "2. defi-agent container healthy at $BASE_URL"
 if ! curl -fsS -m 5 "$BASE_URL/health" >/dev/null 2>&1; then
-  fail "$BASE_URL/health did not respond. Run 'docker compose up -d --build' first."
+  fail "$BASE_URL/health did not respond. Run './scripts/setup.sh --yes' first (bare-metal) or 'docker compose up -d --build' (docker)."
 fi
 ok "/health returned 200"
 
@@ -92,7 +92,7 @@ claude mcp add --transport http --scope local "$SERVER_NAME" "$BASE_URL/mcp/" --
 ok "registered"
 
 echo
-printf "${GREEN}Done.${CLR} Restart Claude Code in this directory to load the 22 defi-agent tools.\n\n"
+printf "${GREEN}Done.${CLR} Restart Claude Code in this directory to load the defi-agent tools (41 total).\n\n"
 echo "  cd $(pwd)"
 echo "  claude"
 echo

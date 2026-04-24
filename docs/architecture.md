@@ -473,7 +473,7 @@ Replace the template's `configuration-keys.json` with:
   "AUTH_ENABLED": true,
   "API_KEY": "local-dev-key",
   "MANGROVE_API_KEY": "dev_...",
-  "MANGROVEMARKETS_BASE_URL": "http://localhost:8080",
+  "MANGROVEMARKETS_BASE_URL": "http://localhost:9081",
   "DB_PATH": "./agent.db",
   "KEYRING_SERVICE_NAME": "defi-agent",
   "MASTER_KEY_ENV_FALLBACK": "",

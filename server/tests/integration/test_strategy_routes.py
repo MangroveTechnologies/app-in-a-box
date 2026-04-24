@@ -53,6 +53,7 @@ def client(tmp_path, monkeypatch):
     sdk.strategies.update_status.return_value = MagicMock(success=True)
 
     eval_resp = MagicMock()
+    eval_resp.new_orders = None
     eval_resp.order_intents = []
     eval_resp.orders = None
     eval_resp.model_dump.return_value = {"orders": []}

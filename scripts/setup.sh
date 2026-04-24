@@ -34,7 +34,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
-BASE_URL="${BASE_URL:-http://localhost:8080}"
+BASE_URL="${BASE_URL:-http://localhost:9080}"
 CONFIG_FILE="server/src/config/local-config.json"
 EXAMPLE_CONFIG="server/src/config/local-example-config.json"
 PID_FILE="agent-data/bare.pid"
@@ -154,12 +154,14 @@ fi
 # Update MANGROVEMARKETS_BASE_URL if still localhost (the example default is
 # localhost, which is wrong for most users who want the hosted server).
 CURRENT_URL="$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('MANGROVEMARKETS_BASE_URL',''))")"
-if [ "$CURRENT_URL" = "http://localhost:8080" ]; then
+if [ "$CURRENT_URL" = "http://localhost:9081" ]; then
   NEW_URL="${MARKETS_URL_ARG:-$MARKETS_URL_DEFAULT}"
   if [ "$ASSUME_YES" != "yes" ] && [ -z "$MARKETS_URL_ARG" ]; then
     echo
-    echo "MANGROVEMARKETS_BASE_URL is currently http://localhost:8080 (self-hosted)."
+    echo "MANGROVEMARKETS_BASE_URL is currently http://localhost:9081 (self-hosted placeholder)."
     echo "Most users want the hosted URL. Accept the default, or paste your own."
+    echo "(Self-host note: 9081 avoids the VSCode Helper :8080 collision — if you run"
+    echo " MangroveMarkets-MCP-Server locally, bind it on 9081 to match this config.)"
     printf "[default: %s] " "$NEW_URL"
     read -r USER_URL
     [ -n "$USER_URL" ] && NEW_URL="$USER_URL"
@@ -214,10 +216,10 @@ else
     if [ "$FOREGROUND" = "yes" ]; then
       info "running in foreground (Ctrl+C to stop)"
       exec env ENVIRONMENT=local PYTHONPATH="$PYTHONPATH" python3 -m uvicorn src.app:app \
-        --host 0.0.0.0 --port 8080 --workers 1 --timeout-keep-alive 120
+        --host 0.0.0.0 --port 9080 --workers 1 --timeout-keep-alive 120
     else
       nohup env ENVIRONMENT=local PYTHONPATH="$PYTHONPATH" python3 -m uvicorn src.app:app \
-        --host 0.0.0.0 --port 8080 --workers 1 --timeout-keep-alive 120 \
+        --host 0.0.0.0 --port 9080 --workers 1 --timeout-keep-alive 120 \
         > "$REPO_ROOT/$LOG_FILE" 2>&1 &
       echo $! > "$REPO_ROOT/$PID_FILE"
       info "uvicorn started in background (pid $(cat "$PID_FILE"))"

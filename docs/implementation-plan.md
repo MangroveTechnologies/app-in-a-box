@@ -4,7 +4,7 @@
 
 **Goal:** Build defi-agent — a local FastAPI + MCP service that wraps `mangroveai` and `mangrovemarkets` SDKs, runs autonomous trading strategies on cron jobs, and logs every evaluation and trade.
 
-**Architecture:** Single-process FastAPI app serves REST (`/api/v1/agent/*`) and MCP (`/mcp`) on port 8080. SQLite for all state including the APScheduler jobstore. Wallet keys encrypted with Fernet, master key in OS Keychain. Strategy evaluation delegated entirely to `mangroveai.execution.evaluate()` — the agent never reimplements signal/risk logic. Single execution path (`order_executor`) for both cron-driven and user-initiated swaps.
+**Architecture:** Single-process FastAPI app serves REST (`/api/v1/agent/*`) and MCP (`/mcp`) on port 9080 (externally; container-internal is still 8080). SQLite for all state including the APScheduler jobstore. Wallet keys encrypted with Fernet, master key in OS Keychain. Strategy evaluation delegated entirely to `mangroveai.execution.evaluate()` — the agent never reimplements signal/risk logic. Single execution path (`order_executor`) for both cron-driven and user-initiated swaps.
 
 **Tech Stack:** Python 3.10+, FastAPI, FastMCP, SQLite, APScheduler, cryptography (Fernet), keyring, mangroveai SDK, mangrovemarkets SDK, pytest.
 
@@ -41,7 +41,7 @@ Goal: turn the app-in-a-box template into a defi-agent shell. After this phase, 
 - [ ] **Step 4:** edit `server/src/api/router.py` — remove imports + includes for deleted routes; add `hello_mangrove` import + include under `x402_router`.
 - [ ] **Step 5:** edit `docker-compose.yml` — delete `postgres` and `redis` services + `volumes` block.
 - [ ] **Step 6:** run the existing test suite: `cd server && pytest`. Expect failures only for removed tests (now deleted) and any test that imported the removed routes — fix any collateral.
-- [ ] **Step 7:** run `docker compose up --build`. Verify the container starts and `curl http://localhost:8080/health` returns 200.
+- [ ] **Step 7:** run `docker compose up --build`. Verify the container starts and `curl http://localhost:9080/health` returns 200.
 - [ ] **Step 8:** commit: `chore(scaffold): rip template demo routes; rename easter_egg → hello_mangrove`.
 
 **Acceptance:** Clean repo with x402 still functional via `hello_mangrove`. App starts. No dead code.
@@ -496,7 +496,7 @@ Goal: every spec endpoint and MCP tool is wired up. After this phase, the agent 
 - [ ] **Step 4:** integration tests for each endpoint.
 - [ ] **Step 5:** commit: `feat(api): discovery routes (status, tools)`.
 
-**Acceptance:** `curl http://localhost:8080/api/v1/agent/status` returns the spec-defined shape.
+**Acceptance:** `curl http://localhost:9080/api/v1/agent/status` returns the spec-defined shape.
 
 ---
 
@@ -765,8 +765,8 @@ Goal: anyone cloning the repo on workshop day can `docker compose up`, hand Clau
   2. `cp server/src/config/local-example-config.json server/src/config/local-config.json`
   3. `sed -i '' 's/MANGROVE_API_KEY_PLACEHOLDER/<your key>/' server/src/config/local-config.json` (or manual edit — document both)
   4. `docker compose up -d --build`
-  5. `curl http://localhost:8080/health` — expect 200
-  6. `curl -H "X-API-Key: local-dev-key" http://localhost:8080/api/v1/agent/status` — expect JSON with `version`, `wallets_count: 0`
+  5. `curl http://localhost:9080/health` — expect 200
+  6. `curl -H "X-API-Key: local-dev-key" http://localhost:9080/api/v1/agent/status` — expect JSON with `version`, `wallets_count: 0`
   7. `cp .mcp.json.example .mcp.json` in any Claude Code project to connect
 - [ ] **Step 2:** explicit scope section in README: "v1 supports EVM chains only (Ethereum, Base, Arbitrum, Polygon, Optimism, BNB, Avalanche, zkSync, Gnosis, Linea). XRPL wallet creation returns a 501 in v1. Solana is not supported."
 - [ ] **Step 3:** link to `docs/testing-testnet.md` (Base Sepolia runbook) and `docs/testing-mainnet.md` (real-funds pre-flight) from the README under a "Testing" section.
@@ -776,7 +776,7 @@ Goal: anyone cloning the repo on workshop day can `docker compose up`, hand Clau
     "mcpServers": {
       "defi-agent": {
         "transport": "http",
-        "url": "http://localhost:8080/mcp",
+        "url": "http://localhost:9080/mcp",
         "headers": {
           "X-API-Key": "local-dev-key"
         }

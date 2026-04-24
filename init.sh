@@ -61,7 +61,7 @@ echo ""
 echo "Next steps:"
 echo "  1. cp server/src/config/local-example-config.json server/src/config/local-config.json"
 echo "  2. docker compose up -d --build"
-echo "  3. curl http://localhost:8080/health"
+echo "  3. curl http://localhost:9080/health"
 echo ""
 
 # Self-delete

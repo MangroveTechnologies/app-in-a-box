@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     db_file = tmp_path / "disc.db"
+    from src.api.routes import discovery
     from src.config import app_config
     from src.services import scheduler_service as ss
     from src.shared.db import sqlite as db_mod
@@ -19,6 +20,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(app_config, "DB_PATH", str(db_file))
     db_mod.reset_connection()
     ss.reset_scheduler_cache()
+    discovery.reset_catalog_cache()
 
     from src.app import create_app
     app = create_app()
@@ -26,13 +28,27 @@ def client(tmp_path, monkeypatch):
         yield c
     ss.reset_scheduler_cache()
     db_mod.reset_connection()
+    discovery.reset_catalog_cache()
 
 
 def test_status_returns_expected_shape(client):
     r = client.get("/api/v1/agent/status")
     assert r.status_code == 200
     body = r.json()
-    assert body["version"] == "0.1.0"
+    # Backwards-compat: original `version` field still present.
+    assert "version" in body
+    assert isinstance(body["version"], str)
+    # New: explicit server_version mirrors `version`, plus sdk_versions + catalog.
+    assert body["server_version"] == body["version"]
+    assert set(body["sdk_versions"].keys()) == {"mangroveai", "mangrovemarkets"}
+    assert set(body["catalog"].keys()) == {
+        "signals_total",
+        "kb_indicators_total",
+        "kb_tags_total",
+        "as_of",
+        "error",
+    }
+    # Unchanged fields.
     assert body["wallets_count"] == 0
     assert set(body["strategies"].keys()) == {"draft", "inactive", "paper", "live", "archived"}
     assert body["active_cron_jobs"] == 0
@@ -66,6 +82,74 @@ def test_status_counts_wallets_and_strategies(client):
     assert body["strategies"]["paper"] == 2
     assert body["strategies"]["live"] == 1
     assert body["strategies"]["archived"] == 1
+
+
+def test_status_reports_catalog_counts_when_sdk_reachable(client, monkeypatch):
+    """With a stubbed SDK, catalog counts flow through end-to-end."""
+    from types import SimpleNamespace
+
+    from src.api.routes import discovery
+
+    class _StubSignals:
+        def list_iter(self, *, limit_per_page):
+            yield from (SimpleNamespace(name=f"sig_{i}") for i in range(228))
+
+    class _StubIndicators:
+        def list(self, **_):
+            return [SimpleNamespace(name=f"ind_{i}") for i in range(70)]
+
+    class _StubTags:
+        def list(self):
+            return [SimpleNamespace(tag=f"t_{i}") for i in range(42)]
+
+    class _StubKB:
+        indicators = _StubIndicators()
+        tags = _StubTags()
+
+    class _StubClient:
+        signals = _StubSignals()
+        kb = _StubKB()
+
+    discovery.reset_catalog_cache()
+    monkeypatch.setattr(
+        "src.shared.clients.mangrove.mangroveai_client",
+        lambda: _StubClient(),
+    )
+
+    body = client.get("/api/v1/agent/status").json()
+    assert body["catalog"]["signals_total"] == 228
+    assert body["catalog"]["kb_indicators_total"] == 70
+    assert body["catalog"]["kb_tags_total"] == 42
+    assert body["catalog"]["error"] is None
+    assert body["catalog"]["as_of"] is not None
+
+
+def test_status_catalog_is_resilient_when_sdk_unreachable(client, monkeypatch):
+    """If the SDK client itself raises, catalog fields are null with a truncated error note."""
+    from src.api.routes import discovery
+
+    def _raise():
+        raise RuntimeError("no API key configured")
+
+    discovery.reset_catalog_cache()
+    monkeypatch.setattr(
+        "src.shared.clients.mangrove.mangroveai_client",
+        _raise,
+    )
+
+    body = client.get("/api/v1/agent/status").json()
+    assert body["catalog"]["signals_total"] is None
+    assert body["catalog"]["kb_indicators_total"] is None
+    assert body["catalog"]["kb_tags_total"] is None
+    assert body["catalog"]["error"] is not None
+    assert "client_init_failed" in body["catalog"]["error"]
+
+
+def test_sdk_versions_are_strings_or_null(client):
+    body = client.get("/api/v1/agent/status").json()
+    for sdk in ("mangroveai", "mangrovemarkets"):
+        v = body["sdk_versions"][sdk]
+        assert v is None or (isinstance(v, str) and len(v) > 0)
 
 
 def test_tools_returns_registered_catalog(client):

@@ -82,6 +82,7 @@ async def get_reference(reference_id: str) -> dict[str, Any]:
 
 class BuildFromReferenceRequest(BaseModel):
     timeframe: str | None = None  # Defaults to the reference's own timeframe.
+    asset: str | None = None  # Retarget onto a different asset; defaults to the reference's own.
     name: str | None = None  # Optional override; auto-labelled if omitted.
 
 
@@ -89,10 +90,12 @@ class BuildFromReferenceRequest(BaseModel):
     "/{reference_id}/build",
     summary="Materialize a create-strategy-manual payload from a reference",
     description=(
-        "Copies the reference's signals exactly, only rewriting each "
-        "signal's `timeframe` if overridden. Returns a payload the caller "
-        "can POST to /strategies/manual as-is. The agent uses this after "
-        "presenting reference candidates and letting the user pick one."
+        "Copies the reference's signals exactly. `timeframe` and `asset` "
+        "are free-to-override — a reference strategy is a portable signal "
+        "combo, not a pin to the source asset/timeframe. Returns a payload "
+        "the caller can POST to /strategies/manual as-is, or bulk-backtest "
+        "by calling build N times across candidate references and routing "
+        "each result through /backtest."
     ),
 )
 async def build_from_reference(
@@ -103,6 +106,7 @@ async def build_from_reference(
         return reference_strategies_service.build_from_reference(
             reference_id=reference_id,
             timeframe_override=req.timeframe,
+            asset_override=req.asset,
             name=req.name,
         )
     except ValueError as e:

@@ -111,9 +111,15 @@ Then ask:
 Detailed authoring flow (reference-first, KB-grounded, autonomous fallback) lives in the **`/create-strategy` skill**. Load and follow that — it covers:
 
 - **Phase A** — `search_reference_strategies` first (always)
-- **Phase B** — `build_strategy_from_reference` when a reference matches (signals + params copied exactly)
+- **Phase B-bulk** — when 2+ references match, build all onto the user's (asset, timeframe) and bulk-backtest; rank by performance, not by label
+- **Phase B** — single build when exactly one reference matches
 - **Phase C** — custom build with required `kb_search` citation per signal (no library-default params)
 - **Phase D** — `create_strategy_autonomous` only when the user says "pick for me"
+
+Two invariants for Stage 2:
+
+1. **Reference strategies are portable.** The asset and timeframe on a reference record are provenance, not constraints. `build_strategy_from_reference` accepts `asset` + `timeframe` overrides — retarget freely and let the backtest decide.
+2. **Bulk-backtest beats label-pick.** When multiple references match, always build + backtest all of them before presenting a winner. Don't ask the user to pick a reference from names and descriptions; picking by label is a KB-grounding regression.
 
 Never default to Phase D as the first move.
 

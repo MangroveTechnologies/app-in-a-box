@@ -21,13 +21,34 @@ backed by evidence**, not library defaults.
 Two mechanisms drive "intuition":
 
 - **Mechanism 2 (reference strategies) — the primary path.** Curated
-  known-good configs. The agent searches these FIRST, presents matches
-  to the user, and materializes the chosen one exactly. Zero parameter
-  guessing for the common case.
+  known-good configs. The agent searches these FIRST, bulk-backtests
+  the top matches onto the user's target, and promotes by ranked
+  performance. Zero parameter guessing for the common case.
 - **Mechanism 1 (KB-grounded parameters) — the fallback.** When
   references don't fit (unusual asset, unusual goal, or user wants to
   modify), the agent is REQUIRED to call `kb_search` for every signal
   it picks before finalizing params. No library-default fallback.
+
+### Portability — reference strategies are signal combos, not pins
+
+Every reference in the library is a **portable signal combination**: the
+asset and timeframe on the reference record are where Oracle *found*
+the combo worked, not a constraint on where you can apply it.
+`build_strategy_from_reference` accepts both `asset` and `timeframe`
+overrides for exactly this reason. If the user asks for a strategy on
+AVAX 1h and search returns references recorded on BTC 1h + SOL 5m,
+both are valid candidates — retarget them onto (AVAX, 1h) and let the
+backtest pick the winner. Never quote the reference's own stored
+metrics to the user as if they apply to the retarget.
+
+### Bulk-backtest is the default
+
+When Phase A returns multiple plausible matches (the common case),
+**do not ask the user to pick by label or description** — build all of
+them onto the user's (asset, timeframe), backtest each, and rank by
+actual performance. Picking by label is a KB-grounding regression; the
+whole point of the library is measured outcomes. Ask the user to choose
+only when the backtests tie, or to pick between equivalent PASSes.
 
 A third mechanism (mined parameter priors from the 1.4M-strategy DB)
 will land via MangroveAI endpoint after MangroveOracle issue #156. This
@@ -63,29 +84,54 @@ Example FAST ADVANCE triggers:
 
 Call `search_reference_strategies(asset, timeframe, goal_hint)`. You will get back up to 5 ranked candidates, each with:
 
-- `id` (e.g. `ref-004`)
+- `id` (e.g. `ref-004` or `oracle-exp_…-<run_index>`)
 - `label` (human-readable)
-- `description` (why this works)
+- `description` (why this works / source lineage)
 - `entry_signals` + `exit_signals` (names, types, params)
 - `category`
-- `notes` (tuning hints)
+- `notes` (tuning hints — may be empty for Oracle-sourced entries)
 
-Present the top 2-3 to the user, ranked. For each: show the label, the signal names (not param values — too noisy), the category, and one sentence from `description`. Ask: "Want to use one of these, or should I design something custom?"
+If search returns 2+ plausible candidates, **do not ask the user to pick by label** — move straight to Phase B-bulk. If search returns exactly one, proceed to Phase B. If it returns 0 results or only low-score matches, jump to **Phase C (Custom build, KB-grounded)**.
 
-If `search_reference_strategies` returns 0 results or only low-score matches: jump to **Phase C (Custom build, KB-grounded)**.
+Note: the library spans assets and timeframes beyond just the user's target — Oracle-sourced entries have lineage tied to the experiment where the combo was found, but the combo itself is portable. Treat the returned set as candidates regardless of their recorded asset/TF.
 
-## Phase B — Build from Reference (PREFERRED)
+## Phase B — Build from Reference (single match)
 
-User picks a reference (by id or label). Call `build_strategy_from_reference(reference_id, timeframe=<user's>, name=<optional>)`.
+Only when Phase A returned exactly one candidate. Call `build_strategy_from_reference(reference_id, asset=<user's>, timeframe=<user's>, name=<optional>)`.
 
 You get back a `create_strategy_manual`-compatible payload. Pass it directly to `create_strategy_manual(...)` — DO NOT modify `entry`, `exit`, or `execution_config`. The whole point of Mechanism 2 is that these values came from strategies that already backtested well.
 
 Only adjustable fields:
 
-- `timeframe` override (already handled by build_strategy_from_reference)
+- `asset` override (retarget the combo onto the user's asset)
+- `timeframe` override (retarget onto the user's TF)
 - `name` (cosmetic)
 
 If the user wants to TWEAK the reference (e.g. "but use RSI(9) not RSI(14)"): acknowledge their change, then move to Phase C's KB-citation discipline BEFORE applying the tweak. Don't change params without citation.
+
+## Phase B-bulk — Build + backtest the top N references (common case)
+
+When Phase A returns multiple candidates, bulk-build and bulk-backtest. This is the default path because picking by label means picking by description — and descriptions don't predict backtest performance.
+
+```
+for ref in references[:N]:        # N ~= 3-5
+    payload = build_strategy_from_reference(
+        reference_id=ref.id,
+        asset=<user's asset>,     # retarget every ref onto the user's target
+        timeframe=<user's TF>,    # same
+    )
+    strategy = create_strategy_manual(**payload)
+    backtest_strategy(strategy.id, mode="full")
+```
+
+Then rank the results by the Phase F thresholds (sortino, sharpe, calmar, irr, max_drawdown, win_rate). Present the ranked table to the user:
+
+- Winner (PASS) + 1–2 runners-up with per-threshold verdicts
+- The loser(s) shown briefly so the user sees that the top one earned its spot, not picked blindly
+
+Ask: "Promote the winner to paper, iterate on the runners-up, or start over with a different goal?" Do NOT auto-promote — the transition is the user's call.
+
+If every backtest fails (all FAIL against threshold_spec), that's a signal the combos in the library don't fit this (asset, TF, goal). Move to Phase C or Phase D rather than promoting a losing config.
 
 ## Phase C — Custom Build (KB-GROUNDED, Mechanism 1)
 
@@ -196,12 +242,17 @@ User wants a strategy
 │
 ├─→ Phase A: search_reference_strategies(asset, timeframe, goal_hint)
 │       │
-│       ├─ ≥1 good match → present to user → pick → Phase B
-│       ├─ 0 good matches → Phase C
+│       ├─ ≥2 candidates → Phase B-bulk (build all, backtest all, rank)
+│       ├─ 1 candidate   → Phase B (single build + backtest)
+│       ├─ 0 candidates  → Phase C
 │       └─ user says "just pick" → Phase D (autonomous)
 │
+├─ Phase B-bulk: loop build_strategy_from_reference → create_strategy_manual
+│       → backtest_strategy for each; retarget every ref onto the user's
+│       (asset, timeframe); rank by threshold_spec; present ranked table
+│
 ├─ Phase B: build_strategy_from_reference + create_strategy_manual
-│       (signals + params copied exactly, timeframe applied)
+│       (single match; signals + params copied exactly, asset/tf applied)
 │
 ├─ Phase C: kb_search each signal → cite → create_strategy_manual
 │       (custom, evidence-backed)

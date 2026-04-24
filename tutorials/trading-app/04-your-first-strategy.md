@@ -63,25 +63,39 @@ The bot should:
 3. Show you 2–3 options with a brief description, signal names,
    and category.
 
-Expected response shape:
+Expected response shape (exact names may vary; the search ranks by
+specificity — exact asset + timeframe + category first, then loosens):
 
 ```
-Here are three momentum-oriented reference strategies for ETH on 1h:
+Here are three reference strategies for ETH on 1h, ranked by match:
 
-1. **ref-001 — ETH momentum with RSI + SMA crossover** (category: trend-following)
-   Entry: rsi_cross_up(14, 30), sma_cross_up(20, 50), adx_strong_trend(14, 25)
-   Exit:  rsi_cross_down(14, 70), sma_cross_down(20, 50)
+1. **ref-001 — ETH momentum — MACD bullish cross on 1h** (category: momentum)
+   Entry: macd_bullish_cross
+   Exit:  macd_bearish_cross
+   Notes: Starter config. MACD params can be tuned tighter on 1h
+          crypto (e.g. 8,21,5) for more trades.
 
-2. **ref-004 — ETH breakout on ADX + MACD** (category: momentum)
-   Entry: adx_strong_trend(14, 25), macd_bullish_cross(12, 26, 9)
-   Exit:  macd_bearish_cross(12, 26, 9)
+2. **ref-009 — ETH mean-reversion tight — Stoch oversold bounce on 1h** (category: mean_reversion)
+   Entry: rsi_cross_up, stoch_oversold
+   Exit:  rsi_cross_down
+   Notes: Dual oscillator confluence. High trade count, small edges —
+          slippage/fees matter more here.
 
-3. **ref-007 — ETH trend-following with ichimoku** (category: trend-following)
-   Entry: ichimoku_bullish, sma_cross_up(20, 50)
-   Exit:  ichimoku_bearish
+3. **ref-007 — ETH momentum — ROC positive + above SMA on 4h** (category: momentum)
+   Entry: roc_momentum_shift, is_above_sma
+   Exit:  roc_momentum_shift
+   Notes: Matched on asset + momentum but different timeframe (4h vs 1h).
+          Only surfaced because the exact 1h momentum cell is thin.
 
 Which one do you want to build?
 ```
+
+**A note on coverage.** The curated library is small (12 strategies
+across ETH + BTC on 1h / 4h / 1d). For narrow queries the search
+will loosen filters to surface related candidates — e.g., different
+timeframe but same category, or same timeframe but different style.
+Read the category and timeframe of each candidate before picking;
+don't assume all three are exact matches for what you asked.
 
 **Pick one.** For the workshop, say: `"Let's try ref-001."`
 
@@ -155,8 +169,8 @@ The bot will tell you which thresholds are short. Two options:
    will give you real signal on whether the strategy works on
    today's market.
 2. **Iterate the goal.** Ask the bot for a different reference:
-   `"Show me ref-004 or ref-007 instead."` Or try a different
-   timeframe: `"Same structure but on 4h."`
+   `"Show me ref-009 instead"` (the mean-reversion alternative) or
+   `"What about on 4h?"` (pulls in ref-005, ref-007 for ETH 4h).
 
 ### If FAIL
 

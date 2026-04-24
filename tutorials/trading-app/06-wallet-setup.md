@@ -67,7 +67,7 @@ send more.
 
 1. **The address** — this is public, safe to share, and where you'll
    send USDC.
-2. **The `reveal_cmd`** — a shell command with a short `secret_id`.
+2. **The `reveal_cmd`** — a shell command with a short `vault_token`.
    That id has a 5-minute TTL and is single-read. You have one
    shot to see the plaintext.
 3. **The `master_key_source`** — where your local encryption key
@@ -103,7 +103,7 @@ characters prefixed with `0x`. **Save it now**:
 
 After you've saved it, close the terminal window. The vault entry is
 consumed after reveal — running the same command again will say "no
-such secret_id." That's by design.
+such vault_token." That's by design.
 
 ### A.2 — Confirm the backup
 
@@ -196,7 +196,7 @@ You'll see:
 ```
 Enter private key or mnemonic. Input is hidden (no echo).
 Secret will be stashed with a 5-minute TTL; use the returned
-secret_id with import_wallet and DO NOT type it in chat.
+vault_token with import_wallet and DO NOT type it in chat.
 
 Secret:
 ```
@@ -208,7 +208,7 @@ Press Enter.
 Output:
 
 ```
-✓ Stashed. secret_id: f9a2c14d
+✓ Stashed. vault_token: f9a2c14d
   Pass this to import_wallet within 5 minutes.
 ```
 
@@ -216,9 +216,9 @@ Output:
 
 In Claude Code:
 
-> "Import my existing wallet with secret_id f9a2c14d."
+> "Import my existing wallet with vault_token f9a2c14d."
 
-The bot calls `import_wallet(secret_id="f9a2c14d")`. Expected response:
+The bot calls `import_wallet(vault_token="f9a2c14d")`. Expected response:
 
 ```
 Wallet imported on Base mainnet.
@@ -229,7 +229,7 @@ Address:
 Block explorer: https://basescan.org/address/0xDeadbeef1234...
 
 Your secret is already backed up (you just typed it into
-stash-secret.sh — that's what gave you the secret_id). The agent
+stash-secret.sh — that's what gave you the vault_token). The agent
 auto-confirmed the backup, so live trading is already unlocked for
 this wallet.
 
@@ -311,10 +311,10 @@ laptop just hosts the encrypted store.
 
 ## Troubleshooting
 
-### "The reveal_cmd says 'no such secret_id'"
+### "The reveal_cmd says 'no such vault_token'"
 
 The TTL expired (5 minutes default) OR you already ran the reveal
-once. Either way, the single-use secret_id is gone.
+once. Either way, the single-use vault_token is gone.
 
 Recover via the reveal-by-address path:
 

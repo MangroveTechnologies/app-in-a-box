@@ -133,7 +133,7 @@ the key.
 
 **How it works:** every wallet has a `backup_confirmed_at` column
 in the local database, initially NULL. You create a wallet, the bot
-returns a `secret_id`; you run `./scripts/reveal-secret.sh <id>`
+returns a `vault_token`; you run `./scripts/reveal-secret.sh <id>`
 in a terminal, save the key somewhere durable (password manager,
 paper, hardware wallet), then run `./scripts/confirm-backup.sh
 <address>` to flip the flag. Only after that flag is set will

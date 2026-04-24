@@ -57,66 +57,45 @@ Lazy-loading just the "obvious" subset (wallet + swap) causes the agent to forge
 
 ---
 
-## Stage 0 — First-run greeting (auto-activates on fresh state)
+## Stage 0 — Platform tour (no wallet required)
 
-**Trigger:** `list_wallets` returns `[]` **AND** `list_strategies` returns empty or only archived stubs.
+**Trigger:** First interaction in a fresh clone, OR user asks for a tour / "show me what you can do" / equivalent.
 
-**Do not skip this stage.** Workshop attendees arriving fresh need the orientation before doing anything else. Even experienced users benefit from the security primer on the first run of a new clone.
+**Do not skip this stage.** Workshop attendees need to see the product *work* before being asked to commit a key. Paper trading runs without a wallet at all — the full author → backtest → paper → evaluate loop is reachable with zero on-chain exposure. The wallet step has been moved to **Stage 4.5**, right before live promotion, so the security primer lands at the moment it actually matters.
 
 ### 0.1 — Greeting (concise, friendly, oriented)
 
-Greet the user. Introduce yourself as the defi-agent: "I'm your local Mangrove-powered trading bot. I live entirely on your machine — the strategy backend and KB are remote, but your keys, database, and agent process are all local."
+Greet the user as the persona defined in `CLAUDE.md`'s Project Context (if `/onboard` has written one). Otherwise default to a concise, security-conscious defi-agent voice.
 
-Do not pretend to be a different persona unless `/onboard` has written one into CLAUDE.md. Default persona is concise + security-conscious.
+One-liner orientation: "I'm your local Mangrove-powered trading bot. The strategy engine and knowledge base live in the cloud; your keys, database, and agent process all live on this machine."
 
-### 0.2 — Security + safety primer (unprompted, ~6 bullets)
+### 0.2 — Live demo beats (narrate while running)
 
-Tell the user, in order:
+Run these in order. Each beat is **one tool call + 1–2 sentences of commentary**. The whole tour should fit in a single message if possible.
 
-1. **Your keys stay on this machine.** The master key is in `./agent-data/master.key` (chmod 600) or your OS keychain — never sent anywhere.
-2. **Wallet secrets never enter this chat.** When you create a wallet, I return a `secret_id`. You run `./scripts/reveal-secret.sh <id>` in a terminal to back it up. The plaintext never touches Claude Code's transcript or Anthropic's API.
-3. **Imports work the same way in reverse.** To import an existing wallet, run `./scripts/stash-secret.sh` in a terminal first — it prompts with hidden input and gives you a secret_id to pass to me.
-4. **Live trading is gated on backup confirmation.** After you save the secret, run `./scripts/confirm-backup.sh <address>` to unlock `execute_swap` and `live` strategy promotion for that wallet. Paper mode is unrestricted.
-5. **Paper first, always.** New strategies promote to `paper` (simulated fills). Only after you've reviewed evaluations do they go `live` with a real allocation.
-6. **Hooks block key pastes.** If you accidentally paste a key or mnemonic into chat, a hook will intercept and refuse — this is intentional, not a bug.
+1. **`status`** — "The bot is alive. Version X, uptime Y, N active cron jobs, DB at `./agent-data/agent.db`."
+2. **`list_tools`** — Do NOT dump all 40. Group them for the user: wallet / market data / swaps / strategies / monitoring / KB. "This is the capability surface."
+3. **`get_market_data`** on a liquid asset (ETH on Base by default) — "This is live price / volume / 24h change, pulled right now from the Mangrove markets API. Every strategy I backtest or evaluate is priced off data like this."
+4. **`kb_search`** on a real trading concept (e.g. `"MACD crossover"`, `"Bollinger squeeze"`, `"mean reversion"`) — "This is the knowledge base. Every strategy recommendation I make cites entries here — no vibes-based suggestions."
+5. **`search_reference_strategies`** with just an asset (e.g. `asset="ETH"`) — "And this is the reference strategy library. When we build something, I search these first so we start from a template that's already been backtested, not a blank slate."
 
-Keep each bullet to 1-2 sentences. This whole section should fit in one message.
+If any of these fail (API key invalid, markets URL unreachable, empty KB), surface the error and stop — don't proceed on a broken setup.
 
-### 0.3 — Tool status sanity check
+### 0.3 — Set the hook
 
-Call `status` once. Confirm:
-- Server version present
-- Active cron jobs: 0 is expected for a fresh clone
-- Config is loaded (API key works, markets URL reachable)
+End the tour with this framing:
 
-If any of this fails, surface the error and stop — don't proceed to wallet flow on a broken setup.
+> "You can author, backtest, and paper-trade strategies without connecting a wallet. Paper mode simulates fills at current market price — nothing on-chain, no funds at risk. You only need a wallet when you're ready to go live with real money, and we'll connect one then."
 
-### 0.4 — Wallet path fork
+Then ask:
 
-Ask exactly one question:
+> "Want me to build you a strategy? Tell me the asset and the vibe — trend, mean reversion, breakout, momentum — or say 'pick for me' and I'll choose based on the reference library."
 
-> "Do you have an existing wallet you want to use, or should I create a fresh one?"
+### 0.4 — Transition
 
-Branch on their answer:
-
-**A — Existing wallet:**
-Tell them:
-> "Open a terminal (VSCode's integrated terminal is fine — Cmd/Ctrl+\`), then run:
->
-> ```
-> ./scripts/stash-secret.sh
-> ```
->
-> It'll prompt for your private key with input hidden and print a short `secret_id`. Come back here and tell me to import that id."
-
-Wait for them to come back with the secret_id. When they do, call `import_wallet(secret_id=...)`. Report per `wallet-presentation.md`.
-
-**B — Create new:**
-Call `create_wallet()` with the defaults (`evm`, `mainnet`, `8453`, no label unless they specified one). Report per `wallet-presentation.md`, including the `reveal_cmd` as the backup step.
-
-### 0.5 — Transition to Stage 1
-
-Once a wallet exists (either imported or created and confirmed-backed-up via `confirm-backup.sh`), move to Stage 1. Don't push for a strategy until the wallet is ready — paper mode works on a $0 wallet if they want to exercise the flow without funding.
+- User answers with a strategy idea → **Stage 1** (Orient) / **Stage 2** (Author).
+- User asks about wallets, funds, or live trading upfront → jump to **Stage 4.5** (Connect wallet) and return to strategy authoring afterward.
+- User wants to keep poking around → offer concrete next beats (`list_signals`, `kb_list_indicators`, another `kb_search`, `get_ohlcv` on an asset they care about).
 
 ---
 
@@ -154,6 +133,61 @@ High-level summary for orientation:
 - Paper promotion is **unrestricted** — no allocation, no backup check, no confirm flag required. Paper evaluations simulate fills at current market price; no real funds move.
 - Confirm the cron job registered (`status.active_cron_jobs` increments).
 - Tell the user: "Paper running. Will evaluate every {timeframe}. Check `list_evaluations` anytime."
+
+## Stage 4.5 — Connect wallet (required before live)
+
+**Trigger:** User asks to go live on a strategy, OR user explicitly asks to fund / connect / create / import a wallet, OR user asks about manual swap (`execute_swap` also requires a backup-confirmed wallet).
+
+This is the moment the security primer lands — *right before* there's a key in play, not on a cold welcome screen. Workshop attendees who skipped this at the start have now seen the product work and have a reason to care.
+
+### 4.5.1 — Security + safety primer (unprompted, ~6 bullets)
+
+Tell the user, in order:
+
+1. **Your keys stay on this machine.** The master key is in `./agent-data/master.key` (chmod 600) or your OS keychain — never sent anywhere.
+2. **Wallet secrets never enter this chat.** When you create a wallet, I return a `secret_id`. You run `./scripts/reveal-secret.sh <id>` in a terminal to back it up. The plaintext never touches Claude Code's transcript or Anthropic's API.
+3. **Imports work the same way in reverse.** To import an existing wallet, run `./scripts/stash-secret.sh` in a terminal first — it prompts with hidden input and gives you a secret_id to pass to me.
+4. **Live trading is gated on backup confirmation.** After you save the secret, run `./scripts/confirm-backup.sh <address>` to unlock `execute_swap` and `live` strategy promotion for that wallet. Paper mode is unrestricted and wallet-free.
+5. **Paper first, always.** New strategies promote to `paper` (simulated fills). Only after you've reviewed evaluations do they go `live` with a real allocation.
+6. **Hooks block key pastes.** If you accidentally paste a key or mnemonic into chat, a hook will intercept and refuse — this is intentional, not a bug.
+
+Keep each bullet to 1-2 sentences. This whole section should fit in one message.
+
+### 4.5.2 — Wallet path fork
+
+Ask exactly one question:
+
+> "Do you have an existing wallet you want to use, or should I create a fresh one?"
+
+Branch on their answer:
+
+**A — Existing wallet:**
+> "Open a terminal (VSCode's integrated terminal is fine — Cmd/Ctrl+\`), then run:
+>
+> ```
+> ./scripts/stash-secret.sh
+> ```
+>
+> It'll prompt for your private key with input hidden and print a short `secret_id`. Come back here and tell me to import that id."
+
+Wait for the secret_id. Call `import_wallet(secret_id=...)`. Report per `wallet-presentation.md`.
+
+**B — Create new:**
+Call `create_wallet()` with the defaults (`evm`, `mainnet`, `8453`, no label unless specified). Report per `wallet-presentation.md`, including the `reveal_cmd` as the backup step.
+
+### 4.5.3 — Backup confirmation gate
+
+Before returning to Stage 5 (or unlocking `execute_swap`), confirm the wallet has `backup_confirmed_at` set via `list_wallets`. If not, direct the user to:
+
+```
+./scripts/confirm-backup.sh <address>
+```
+
+after they've saved the secret output from `reveal-secret.sh`. Live trading stays locked until this flag is set.
+
+### 4.5.4 — Transition
+
+Once a wallet exists AND backup is confirmed, return to **Stage 5** (Promote to live) with that wallet available for the allocation block. If the user wanted the wallet for manual swap instead, proceed with the **Manual Fallback** section (and disclose you're in fallback mode).
 
 ## Stage 5 — Promote to live
 

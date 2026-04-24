@@ -67,7 +67,7 @@ First run takes about 60 seconds. It does, in order:
    `http://localhost:9080`.
 7. Waits for `/health` to return 200 before moving on.
 8. Registers the MCP server with Claude Code via
-   `claude mcp add -s local defi-agent http://localhost:9080/mcp/`.
+   `claude mcp add -s local -t http defi-agent http://localhost:9080/mcp/ --header "X-API-Key: dev-key-1"`.
 9. Runs a quick verify pass — hits a few endpoints to confirm the
    tool catalog loaded.
 
@@ -239,10 +239,10 @@ Usually one of three things:
    registrations are keyed to the project directory. Make sure
    you're in `~/Desktop/defi-agent` (or wherever you cloned).
 
-### "I see 24 tools instead of 41"
+### "I see fewer than 41 tools"
 
-You're on an older version of the repo. `git pull origin main` to
-get the latest, then restart the server:
+You're on an older version of the repo. `git pull` to sync with
+the branch you cloned from, then restart the server:
 
 ```bash
 kill $(cat agent-data/bare.pid) 2>/dev/null

@@ -124,8 +124,10 @@ netstat -an | grep 9080
 ```
 
 If something is returned, figure out what and either shut it down
-before the workshop or set `BARE_PORT=9081` in your environment
-before running setup.
+before the workshop or set `BARE_PORT=9082` in your environment
+before running setup. (Note: 9081 is already used for the
+`MANGROVEMARKETS_BASE_URL` self-host placeholder, so step up to 9082
+if 9080 is taken.)
 
 ## If you're funding a live trade (chapters 06–08)
 

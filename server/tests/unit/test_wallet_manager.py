@@ -202,7 +202,8 @@ def test_sign_round_trip(temp_db, stub_keyring, mock_sdk_create):
         "gas": 21000,
         "maxFeePerGas": 2_000_000_000,
         "maxPriorityFeePerGas": 1_000_000_000,
-        "to": "0x" + "22" * 20,
+        # 1inch V6 AggregationRouter — sign guard requires a known 1inch target
+        "to": "0x111111125421cA6dc452d289314280a0f8842A65",
         "value": 0,
         "data": b"",
         "chainId": 84532,
@@ -222,22 +223,30 @@ def test_sign_unknown_wallet_raises(temp_db, stub_keyring):
     from src.services.wallet_manager import sign
     from src.shared.errors import WalletNotFound
 
+    # Use a guard-compliant payload so the WalletNotFound path is what's being
+    # exercised (not the signing guard).
+    payload = {
+        "nonce": 0,
+        "gas": 21000,
+        "to": "0x111111125421cA6dc452d289314280a0f8842A65",
+        "value": 0,
+        "chainId": 84532,
+    }
     with pytest.raises(WalletNotFound):
-        sign({"nonce": 0}, "0x" + "33" * 20)
+        sign(payload, "0x" + "33" * 20)
 
 
-def test_sign_message_round_trip(temp_db, stub_keyring, mock_sdk_create):
-    from eth_account.messages import encode_defunct
-
+def test_sign_message_blocked_by_guard(temp_db, stub_keyring, mock_sdk_create):
+    """sign_message must refuse by default — no legitimate 1inch swap flow
+    requires EIP-191 personal_sign, and the signing guard hardens against the
+    EIP-7702 / arbitrary-message attack surface that drained the workshop
+    test wallet on 2026-04-24."""
     from src.services.wallet_manager import create_wallet, sign_message
+    from src.shared.errors import SigningError
 
     create_wallet(chain="evm", network="testnet", chain_id=84532)
-    sig_hex = sign_message("hello", _TEST_ADDRESS)
-    assert sig_hex.startswith("0x")
-
-    # Recover the signer and confirm it matches.
-    recovered = Account.recover_message(encode_defunct(text="hello"), signature=sig_hex)
-    assert recovered.lower() == _TEST_ADDRESS.lower()
+    with pytest.raises(SigningError, match="disabled|guard|refuse"):
+        sign_message("hello", _TEST_ADDRESS)
 
 
 # -- wallet_exists -----------------------------------------------------------
@@ -321,7 +330,8 @@ def test_sign_accepts_sdk_style_payload_with_chain_id(temp_db, stub_keyring, moc
     create_wallet(chain="evm", network="testnet", chain_id=84532)
 
     sdk_style_payload = {
-        "to": "0x" + "22" * 20,
+        # 1inch V6 AggregationRouter (same address mainnet + testnet — canonical deploy)
+        "to": "0x111111125421cA6dc452d289314280a0f8842A65",
         "data": "0x",
         "value": "0",
         "gas": 21000,
@@ -448,3 +458,163 @@ def test_fernet_never_silently_regenerates_with_stubbed_keyring(tmp_path, monkey
     assert f.get_master_key_source() == "keyfile"
 
     f.reset_master_key_cache()
+
+
+# -- Signing guard (hardens against the EIP-7702 / arbitrary-message attack
+# surface that drained the workshop test wallet on 2026-04-24) ---------------
+
+# Canonical 1inch AggregationRouter deployments. Same address across chains
+# by 1inch's deterministic-deploy pattern, so these work on Base mainnet
+# (chain_id 8453) AND Base Sepolia testnet (chain_id 84532).
+_ONEINCH_V5 = "0x1111111254EEB25477B68fb85Ed929f73A960582"
+_ONEINCH_V6 = "0x111111125421cA6dc452d289314280a0f8842A65"
+_USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+_APPROVE_SELECTOR_HEX = "0x095ea7b3"
+
+
+def _approve_calldata(spender: str, amount: int = 100) -> str:
+    """Build an ERC-20 `approve(address,uint256)` calldata hex string."""
+    spender_hex = spender.lower().removeprefix("0x").rjust(64, "0")
+    amount_hex = format(amount, "064x")
+    return _APPROVE_SELECTOR_HEX + spender_hex + amount_hex
+
+
+class TestSignGuard:
+    """Sign-layer hard constraint: the agent refuses to sign anything that
+    isn't a direct 1inch swap or a 1inch-bound ERC-20 approve.
+
+    Context: on 2026-04-24 the workshop test wallet was drained $10 via an
+    EIP-7702 authorization that delegated code execution to an attacker-
+    deployed contract. The app-in-a-box agent must not be signable for
+    ANY flow other than 1inch swaps, end of story. This is defense in
+    depth against SDK compromise, supply-chain attacks, and rogue code
+    paths that could otherwise call sign() with a phishing payload.
+    """
+
+    def _make_wallet(self):
+        from src.services.wallet_manager import create_wallet
+        create_wallet(chain="evm", network="testnet", chain_id=84532)
+
+    def _swap_payload(self, to: str, chain_id: int = 84532) -> dict:
+        return {
+            "nonce": 0,
+            "gas": 21000,
+            "maxFeePerGas": 2_000_000_000,
+            "maxPriorityFeePerGas": 1_000_000_000,
+            "to": to,
+            "value": 0,
+            "data": "0x",
+            "chainId": chain_id,
+        }
+
+    def test_accepts_1inch_v6_router(self, temp_db, stub_keyring, mock_sdk_create):
+        from src.services.wallet_manager import sign
+        self._make_wallet()
+        raw = sign(self._swap_payload(_ONEINCH_V6), _TEST_ADDRESS)
+        assert raw.startswith("0x")
+
+    def test_accepts_1inch_v5_router(self, temp_db, stub_keyring, mock_sdk_create):
+        from src.services.wallet_manager import sign
+        self._make_wallet()
+        raw = sign(self._swap_payload(_ONEINCH_V5), _TEST_ADDRESS)
+        assert raw.startswith("0x")
+
+    def test_accepts_testnet_swap_on_base_sepolia(self, temp_db, stub_keyring, mock_sdk_create):
+        """Workshop starts on testnet — guard MUST not discriminate by chain."""
+        from src.services.wallet_manager import sign
+        self._make_wallet()
+        raw = sign(self._swap_payload(_ONEINCH_V6, chain_id=84532), _TEST_ADDRESS)
+        assert raw.startswith("0x")
+
+    def test_accepts_mainnet_swap_on_base(self, temp_db, stub_keyring, mock_sdk_create):
+        """Mainnet must also work once user graduates off testnet."""
+        from src.services.wallet_manager import sign
+        self._make_wallet()
+        raw = sign(self._swap_payload(_ONEINCH_V6, chain_id=8453), _TEST_ADDRESS)
+        assert raw.startswith("0x")
+
+    def test_rejects_non_1inch_to_address(self, temp_db, stub_keyring, mock_sdk_create):
+        from src.services.wallet_manager import sign
+        from src.shared.errors import SigningError
+        self._make_wallet()
+        # A random destination — the shape of the 2026-04-24 drain.
+        bad = self._swap_payload("0x14F9f76863b57e89f2D482557828337234DCacaD")
+        with pytest.raises(SigningError, match="1inch|guard|refuse"):
+            sign(bad, _TEST_ADDRESS)
+
+    def test_rejects_plain_eoa_transfer(self, temp_db, stub_keyring, mock_sdk_create):
+        """Bare ETH/token transfer to an EOA — refused even if it looks innocuous."""
+        from src.services.wallet_manager import sign
+        from src.shared.errors import SigningError
+        self._make_wallet()
+        with pytest.raises(SigningError, match="1inch|guard|refuse"):
+            sign(self._swap_payload("0x" + "22" * 20), _TEST_ADDRESS)
+
+    def test_rejects_tx_with_no_to_field(self, temp_db, stub_keyring, mock_sdk_create):
+        """Contract deployment / bare call — refused."""
+        from src.services.wallet_manager import sign
+        from src.shared.errors import SigningError
+        self._make_wallet()
+        payload = self._swap_payload(_ONEINCH_V6)
+        payload.pop("to")
+        with pytest.raises(SigningError, match="to|guard|refuse"):
+            sign(payload, _TEST_ADDRESS)
+
+    def test_rejects_eip7702_tx_type(self, temp_db, stub_keyring, mock_sdk_create):
+        """EIP-7702 set-code txs (type 4) are the 2026-04-24 attack shape. Refused categorically."""
+        from src.services.wallet_manager import sign
+        from src.shared.errors import SigningError
+        self._make_wallet()
+        payload = self._swap_payload(_ONEINCH_V6)
+        payload["type"] = 4
+        with pytest.raises(SigningError, match="7702|type|guard|refuse"):
+            sign(payload, _TEST_ADDRESS)
+
+    def test_rejects_tx_with_authorization_list_field(self, temp_db, stub_keyring, mock_sdk_create):
+        """Even if the type field is absent, presence of an EIP-7702 authorization list refuses."""
+        from src.services.wallet_manager import sign
+        from src.shared.errors import SigningError
+        self._make_wallet()
+        payload = self._swap_payload(_ONEINCH_V6)
+        payload["authorizationList"] = [
+            {"chainId": 8453, "address": "0xd7d20E03C9793bd1b63291eeA0021c8cC096a915", "nonce": 0}
+        ]
+        with pytest.raises(SigningError, match="7702|authorization|guard|refuse"):
+            sign(payload, _TEST_ADDRESS)
+
+    def test_accepts_approve_when_spender_is_1inch_v6(self, temp_db, stub_keyring, mock_sdk_create):
+        """ERC-20 approve() for a 1inch router is the required step before a 1inch swap."""
+        from src.services.wallet_manager import sign
+        self._make_wallet()
+        payload = self._swap_payload(_USDC_BASE)
+        payload["data"] = _approve_calldata(_ONEINCH_V6, amount=10_000_000)  # 10 USDC
+        raw = sign(payload, _TEST_ADDRESS)
+        assert raw.startswith("0x")
+
+    def test_accepts_approve_when_spender_is_1inch_v5(self, temp_db, stub_keyring, mock_sdk_create):
+        from src.services.wallet_manager import sign
+        self._make_wallet()
+        payload = self._swap_payload(_USDC_BASE)
+        payload["data"] = _approve_calldata(_ONEINCH_V5)
+        raw = sign(payload, _TEST_ADDRESS)
+        assert raw.startswith("0x")
+
+    def test_rejects_approve_when_spender_is_not_1inch(self, temp_db, stub_keyring, mock_sdk_create):
+        """Approve for a non-1inch spender = attacker draining via approve-then-transferFrom."""
+        from src.services.wallet_manager import sign
+        from src.shared.errors import SigningError
+        self._make_wallet()
+        payload = self._swap_payload(_USDC_BASE)
+        payload["data"] = _approve_calldata("0x14F9f76863b57e89f2D482557828337234DCacaD")
+        with pytest.raises(SigningError, match="1inch|approve|guard|refuse"):
+            sign(payload, _TEST_ADDRESS)
+
+    def test_rejects_approve_with_malformed_data(self, temp_db, stub_keyring, mock_sdk_create):
+        """An approve selector without enough bytes for the spender = refuse."""
+        from src.services.wallet_manager import sign
+        from src.shared.errors import SigningError
+        self._make_wallet()
+        payload = self._swap_payload(_USDC_BASE)
+        payload["data"] = "0x095ea7b3"  # selector only, no args
+        with pytest.raises(SigningError, match="1inch|approve|guard|refuse"):
+            sign(payload, _TEST_ADDRESS)

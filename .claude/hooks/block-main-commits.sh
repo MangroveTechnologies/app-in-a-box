@@ -72,12 +72,27 @@ case "$COMMAND" in
         ;;
 esac
 
-# Find git repo; if none, nothing to guard.
-if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
-    exit 0
+# Detect the target repo from `git -C <path> ...`. Worktree workflows MUST
+# use this form — without it, the hook's own cwd (typically the main tree
+# on `main`) false-blocks legitimate feature-branch commits in a sibling
+# worktree. `cd <path> && git ...` is NOT supported here because static
+# regex parsing of arbitrary shell is fragile.
+TARGET_DIR=""
+if [[ "$COMMAND" =~ git[[:space:]]+-C[[:space:]]+([^[:space:]]+) ]]; then
+    TARGET_DIR="${BASH_REMATCH[1]}"
 fi
 
-CURRENT_BRANCH="$(git branch --show-current 2>/dev/null)"
+if [ -n "$TARGET_DIR" ]; then
+    if ! git -C "$TARGET_DIR" rev-parse --show-toplevel >/dev/null 2>&1; then
+        exit 0  # target dir isn't a git repo — nothing to guard
+    fi
+    CURRENT_BRANCH="$(git -C "$TARGET_DIR" branch --show-current 2>/dev/null)"
+else
+    if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
+        exit 0
+    fi
+    CURRENT_BRANCH="$(git branch --show-current 2>/dev/null)"
+fi
 
 # --- Rule 1: git commit / merge / rebase / reset-hard on main or master -------
 

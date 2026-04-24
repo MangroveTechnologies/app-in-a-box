@@ -54,6 +54,8 @@ Lazy-loading just the "obvious" subset (wallet + swap) causes the agent to forge
 5. **Explicit confirmation at status transitions.** `paper → live` requires `confirm=true` AND an allocation block. The user authorizes money-on-the-line transitions; the agent does not.
 6. **Small first allocation.** First live allocation on a new wallet is small (e.g. 10–20% of balance), regardless of the backtest numbers.
 7. **Wallet secrets NEVER in chat.** The agent never sees plaintext keys. See `.claude/rules/wallet-presentation.md` for the SecretVault + reveal-secret.sh flow. If the user tries to paste a key, the harness hook blocks — don't work around it.
+8. **Signing is 1inch-only.** The agent's wallet signing path (`wallet_manager.sign`) will refuse any payload that isn't a direct call to a 1inch AggregationRouter or an `approve()` with a 1inch spender. EIP-7702 set-code txs and personal_sign messages are refused categorically. Triggered by a real workshop drain on 2026-04-24. If a legitimate flow ever needs a different signing shape, the guard's allowlist must be expanded explicitly with review — don't work around it.
+9. **Testnet-first for workshop / learning.** Default to Base Sepolia (chain_id `84532`) for new wallet creation unless the user explicitly asks for mainnet. Funds on testnet are free (faucet) and the signing + swap mechanics exercise identically to mainnet. Only switch to mainnet (chain_id `8453`) on an explicit "real money" / "mainnet" / "live trading" ask from the user.
 
 ---
 
@@ -180,7 +182,7 @@ Branch on their answer:
 Wait for the vault_token. Call `import_wallet(vault_token=...)`. Report per `wallet-presentation.md`.
 
 **B — Create new:**
-Call `create_wallet()` with the defaults (`evm`, `mainnet`, `8453`, no label unless specified). Report per `wallet-presentation.md`, including the `reveal_cmd` as the backup step.
+Default to **testnet** (`evm`, `testnet`, `84532` — Base Sepolia) for workshop / learning / first-wallet contexts. Only pass mainnet defaults (`8453`) when the user explicitly says "real money" / "mainnet" / "live trading with real funds". Report per `wallet-presentation.md`, including the `reveal_cmd` as the backup step and a link to a Base Sepolia faucet if testnet.
 
 ### 4.5.3 — Backup confirmation gate
 

@@ -44,6 +44,16 @@
             "timeout": 3
           }
         ]
+      },
+      {
+        "matcher": "mcp__defi-agent__execute_swap",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/preflight-swap.sh",
+            "timeout": 5
+          }
+        ]
       }
     ]
   }

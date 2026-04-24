@@ -12,17 +12,36 @@ After the phase-2 security rework, wallet secrets flow **out-of-band**. They nev
 
 **If a user pastes a private key or mnemonic into chat**, `.claude/hooks/block-wallet-secrets.sh` will intercept and refuse the prompt. The hook returns a message directing them to `stash-secret.sh`. Do not try to work around this.
 
-## Defaults — do not ask
+## Defaults — testnet-first for workshop, mainnet only on explicit ask
 
-When creating a wallet, assume these defaults and state them to the user:
+When creating a wallet, the default depends on context:
 
+**Workshop / learning / first-run (the default):**
+- **Chain:** `evm`
+- **Network:** `testnet`
+- **Chain ID:** `84532` (Base Sepolia)
+
+State this to the user clearly: *"Creating your wallet on Base Sepolia (testnet). You can fund it with a free sepolia-ETH faucet and practice the full signing + swap flow with zero real-money risk."*
+
+**Mainnet (only when the user explicitly asks):**
 - **Chain:** `evm`
 - **Network:** `mainnet`
 - **Chain ID:** `8453` (Base)
 
-If the user asks for an alternative, proceed with the default but mention:
+If the user says "mainnet" / "real money" / "live trading with real funds", switch to mainnet defaults. Always flag the switch explicitly: *"Switching to Base mainnet. This wallet will transact real funds. Start with 1-5 USDC test deposit and use paper mode to validate the strategy before any live allocation."*
 
-> "Base mainnet is the default for v1. Other EVM chains / testnets / XRPL roll out later — check the release notes."
+**Why testnet-first:** the workshop flow exists to teach the signing + swap mechanics safely. A compromised key on testnet is free to recover from; on mainnet it costs real USDC (see the 2026-04-24 incident that prompted the hard signing guard in `wallet_manager.py::_validate_sign_target`).
+
+## Signing guard — what the agent can and cannot sign
+
+There is a hard safety invariant enforced at `server/src/services/wallet_manager.py::_validate_sign_target`. The agent signs ONLY:
+
+1. Direct calls to known 1inch AggregationRouters (V5 `0x1111111254...A960582`, V6 `0x111111125421...f8842A65`).
+2. ERC-20 `approve(spender, amount)` calls where the spender is a 1inch router (required before a 1inch swap).
+
+Anything else — arbitrary token transfers to EOAs, non-1inch DEX routing, EIP-7702 set-code txs, `authorizationList` fields, EIP-191 personal_sign messages — is refused at sign time, BEFORE the private key is decrypted. This is defense in depth against SDK compromise, supply-chain attacks, and phishing flows that would otherwise ask the agent to sign a delegation or permission the user didn't understand.
+
+If the SDK one day legitimately routes through a different aggregator (e.g. Aerodrome on Base), the allowlist in `_ONEINCH_ROUTERS` must be expanded explicitly with review — don't bypass the guard silently.
 
 ## Presenting `create_wallet` output
 

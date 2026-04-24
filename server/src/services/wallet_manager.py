@@ -52,6 +52,106 @@ _ENCRYPTION_METHOD = "fernet-v1"
 
 
 # ---------------------------------------------------------------------------
+# Signing guard — hardens against the EIP-7702 / arbitrary-message attack
+# surface that drained a workshop test wallet on 2026-04-24.
+#
+# Invariant: the agent signs ONLY things directly related to a 1inch swap —
+# a call to a 1inch AggregationRouter, OR the ERC-20 approve() whose spender
+# is a 1inch router. Any other shape (arbitrary EOA transfers, non-1inch
+# DEX routers, EIP-7702 set-code txs, authorization lists, personal_sign
+# messages) is refused before the private key is decrypted.
+# ---------------------------------------------------------------------------
+
+# Canonical 1inch AggregationRouter deployments. 1inch uses deterministic
+# CREATE2 deploys so the same addresses apply on Base mainnet (chain_id 8453)
+# AND Base Sepolia testnet (chain_id 84532). Workshop flows start on
+# testnet — the guard must not discriminate by chain. If 1inch ships a V7
+# or a new chain deploys at a different address, add it here.
+_ONEINCH_ROUTERS: set[str] = {
+    "0x1111111254eeb25477b68fb85ed929f73a960582",  # V5 AggregationRouter
+    "0x111111125421ca6dc452d289314280a0f8842a65",  # V6 AggregationRouter
+}
+
+# ERC-20 `approve(address,uint256)` function selector.
+_APPROVE_SELECTOR = "0x095ea7b3"
+
+
+def _is_oneinch_router(addr: str | None) -> bool:
+    if not addr:
+        return False
+    return addr.lower() in _ONEINCH_ROUTERS
+
+
+def _extract_approve_spender(data: str | bytes | None) -> str | None:
+    """If `data` is a well-formed ERC-20 approve() call, return the spender
+    address (lowercase 0x-prefixed hex). Return None otherwise."""
+    if data is None:
+        return None
+    s = data.decode() if isinstance(data, bytes) else str(data)
+    s = s.lower()
+    if not s.startswith(_APPROVE_SELECTOR):
+        return None
+    # 4-byte selector (10 hex chars including 0x) + 32-byte spender slot (64 hex chars)
+    if len(s) < 10 + 64:
+        return None
+    spender_slot = s[10 : 10 + 64]
+    # Spender is the last 20 bytes (40 hex chars) of the left-padded 32-byte slot.
+    return "0x" + spender_slot[-40:]
+
+
+def _validate_sign_target(normalized_tx: dict) -> None:
+    """Refuse to sign anything that isn't a direct 1inch swap or a 1inch-bound approve().
+
+    Raises SigningError if the payload is anything else. Must run BEFORE the
+    private key is decrypted so rejected payloads never touch plaintext.
+    """
+    tx_type = normalized_tx.get("type")
+    if tx_type in (3, 4):
+        # 3 = EIP-4844 blob (not used for swaps), 4 = EIP-7702 set-code (the
+        # exact shape of the 2026-04-24 workshop drain).
+        raise SigningError(
+            f"Refused to sign tx of type {tx_type}: only EIP-155 (type 0) and "
+            "EIP-1559 (type 2) txs are permitted by the signing guard. "
+            "Type 4 is EIP-7702 set-code — the attack shape that drained the "
+            "workshop test wallet on 2026-04-24.",
+            suggestion="If this was produced by the SDK, treat as a bug or supply-chain attack — do not bypass the guard without explicit review.",
+        )
+    if "authorizationList" in normalized_tx or "authorization_list" in normalized_tx:
+        raise SigningError(
+            "Refused to sign: tx contains an EIP-7702 authorization list. "
+            "The agent only signs classic 1inch swap txs — authorization-based "
+            "delegation is not permitted.",
+            suggestion="Investigate the code path that built this payload — it should be using the standard dex.prepare_swap flow.",
+        )
+
+    to_addr = normalized_tx.get("to")
+    if not to_addr:
+        raise SigningError(
+            "Refused to sign: tx has no `to` field (contract deployment or bare call). "
+            "The signing guard permits only txs to 1inch routers or ERC-20 approve()-for-1inch.",
+            suggestion="Check the SDK's prepare_swap output — a real swap always has `to` populated with a router address.",
+        )
+
+    # Happy path 1: direct call to a 1inch AggregationRouter (the swap itself).
+    if _is_oneinch_router(to_addr):
+        return
+
+    # Happy path 2: ERC-20 approve() whose spender is a 1inch router (the
+    # approve step that precedes the swap when allowance != max).
+    spender = _extract_approve_spender(normalized_tx.get("data"))
+    if spender is not None and _is_oneinch_router(spender):
+        return
+
+    raise SigningError(
+        f"Refused to sign: `to` address {to_addr} is not a known 1inch router, "
+        "and the tx is not an approve() with a 1inch spender. The signing guard "
+        "permits only direct 1inch swaps and their required token approvals — "
+        "no arbitrary transfers, no non-1inch DEX routing, no EIP-7702 delegation.",
+        suggestion=f"Known 1inch routers: {sorted(_ONEINCH_ROUTERS)}. If the SDK legitimately routes through a different aggregator, the guard's allowlist must be explicitly expanded with review.",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Response / model types
 # ---------------------------------------------------------------------------
 
@@ -623,6 +723,11 @@ def sign(unsigned_tx: dict, wallet_address: str, chain_id: int | None = None) ->
     """
     normalized = _normalize_payload(unsigned_tx, chain_id=chain_id)
 
+    # Signing guard: refuse non-1inch payloads BEFORE the key is decrypted.
+    # Defense in depth against SDK compromise / rogue code paths / EIP-7702
+    # phishing. See _validate_sign_target docstring for full rationale.
+    _validate_sign_target(normalized)
+
     secret = _load_secret(wallet_address)
     try:
         if secret.startswith("0x") or len(secret) == 64:
@@ -653,28 +758,29 @@ def sign(unsigned_tx: dict, wallet_address: str, chain_id: int | None = None) ->
 
 
 def sign_message(message: str | bytes, wallet_address: str) -> str:
-    """Sign a message (EIP-191 personal_sign) with the wallet's key."""
-    from eth_account.messages import encode_defunct
+    """Disabled by the signing guard.
 
-    secret = _load_secret(wallet_address)
-    try:
-        if secret.startswith("0x") or len(secret) == 64:
-            account = Account.from_key(secret)
-        else:
-            Account.enable_unaudited_hdwallet_features()
-            account = Account.from_mnemonic(secret)
+    EIP-191 personal_sign is not required by any 1inch swap flow the agent
+    currently supports. Enabling arbitrary message signing is the attack
+    vector that produced the EIP-7702 drain on 2026-04-24 (the authorization
+    signed by the wallet's key is a message, not a tx). The guard refuses
+    all message-signing by default.
 
-        encoded = encode_defunct(text=message) if isinstance(message, str) else encode_defunct(primitive=message)
-        signed = account.sign_message(encoded)
-    except Exception as e:  # noqa: BLE001
-        raise SigningError(
-            f"Failed to sign message for {wallet_address}: {e}",
-        ) from e
-    finally:
-        del secret
-
-    sig_hex = signed.signature.hex()
-    return sig_hex if sig_hex.startswith("0x") else "0x" + sig_hex
+    If a future flow (e.g. 1inch limit orders, Fusion intents, gasless
+    approves) legitimately needs to sign a structured message, add a narrow
+    typed helper with its own guard that validates the specific payload
+    shape — do NOT reopen this general-purpose personal_sign endpoint.
+    """
+    # Arguments deliberately accepted for signature compatibility — they are
+    # not used, since we refuse all calls. Referenced here to avoid lint warnings.
+    _ = (message, wallet_address)
+    raise SigningError(
+        "Refused to sign: sign_message is disabled by the wallet signing guard. "
+        "The agent only signs 1inch swap txs and approve() calls for 1inch routers — "
+        "arbitrary message signing is a known phishing surface (EIP-7702 authorizations "
+        "were the shape that drained the workshop test wallet on 2026-04-24).",
+        suggestion="If a specific 1inch flow needs message signing, add a narrow typed helper with its own guard — do not reopen the general personal_sign endpoint.",
+    )
 
 
 def _get_wallet_row(address: str) -> dict | None:

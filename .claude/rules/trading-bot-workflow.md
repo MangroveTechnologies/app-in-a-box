@@ -115,7 +115,7 @@ Detailed authoring flow (reference-first, KB-grounded, autonomous fallback) live
 - **Phase A** — `search_reference_strategies` first (always)
 - **Phase B-bulk** — when 2+ references match, build all onto the user's (asset, timeframe) and bulk-backtest; rank by performance, not by label
 - **Phase B** — single build when exactly one reference matches
-- **Phase C** — custom build with required `kb_search` citation per signal (no library-default params)
+- **Phase C** — custom build with required `kb_search` citation per signal (no library-default params). The **`/custom-signal`** skill is the focused entry point: natural-language rule → validated signal-stack payload ready for `create_strategy_manual`.
 - **Phase D** — `create_strategy_autonomous` only when the user says "pick for me"
 
 Two invariants for Stage 2:

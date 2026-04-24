@@ -1,9 +1,10 @@
-# Verification Checklist — State of the Repo as of PR #46
+# Verification Checklist
 
 Follow this after:
-1. Merging PR #46 on GitHub
+1. Merging a change to `main` on GitHub (agent- or user-owned PR)
 2. `git checkout main && git pull origin main` locally
-3. Restart Claude Code in the repo directory (fresh session)
+3. Restarting the bare-metal server so the new code loads (`kill $(lsof -ti :9080); ./scripts/setup.sh --yes --no-mcp --no-verify`)
+4. Restarting Claude Code in the repo directory (fresh session)
 
 Each checkpoint has a **do this**, an **expected**, and a **how to verify**.
 
@@ -25,9 +26,8 @@ git log --oneline -5
 
 **Expect:**
 - On branch `main`
-- Top commit is the PR #46 merge
-- Uncommitted files (CLAUDE.md, branding.json, agent-data-test/) are yours
-  from earlier sessions — leave them alone
+- `HEAD` matches `origin/main` (no "behind" or "ahead" in `git status -sb`)
+- Any dirty files are personal session state (e.g. local edits, untracked scratch dirs) — leave them alone unless you know otherwise
 
 ### 0.2 — Bare-metal server is running the new code
 
@@ -56,12 +56,12 @@ pointing at whatever port `scripts/setup-mcp.sh` configured.)
 
 **Expect:**
 - Agent calls `status`, `list_wallets`, `list_strategies`, `list_tools`
-- **Tool count: 41** (was 24 before PR #45, 8 new in G+H, 30 new in PR #46 — minus `get_token_info` still counts as registered = 41 total auth-tier tools plus the free tier `status` + `list_tools` + `hello_mangrove`)
-- If the count is wrong, tool registration didn't reload — restart the server
+- Tool catalog surfaces all registered tools across the three access tiers (free / auth / x402). Use `list_tools` directly to see the current exact surface — version-specific counts drift as tools are added or removed, so read the live response rather than trusting a hardcoded number here.
+- If fewer tools appear than expected, tool registration didn't reload — restart the server.
 
 ### 0.4 — Fresh-clone Stage 0 greeter fires
 
-This checks the session-start hook from PR #40.
+This checks the session-start hook (`.claude/hooks/check-onboard.sh`).
 
 **Do:** Nothing — on session start with no `.claude/.onboarded` marker,
 the agent should deliver the Stage 0 greeter (security primer + wallet
@@ -339,9 +339,9 @@ rm agent-data/agent.db
 
 ## What you just verified
 
-- [ ] 0.1 Local on main, PR #46 merged
+- [ ] 0.1 Local on main, synced with origin
 - [ ] 0.2 Bare-metal server healthy
-- [ ] 0.3 41 MCP tools loaded
+- [ ] 0.3 MCP tool catalog loads (all registered tools present per `list_tools`)
 - [ ] 0.4 Stage 0 greeter fires (or skipped — `.onboarded` present)
 - [ ] 0.5 Key-paste hook blocks
 - [ ] 1.1 Reference-first strategy creation works

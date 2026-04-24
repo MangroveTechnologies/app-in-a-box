@@ -1677,15 +1677,17 @@ def _register_strategy(server: FastMCP) -> None:
     async def build_strategy_from_reference(
         reference_id: str,
         timeframe: str | None = None,
+        asset: str | None = None,
         name: str | None = None,
         api_key: str = "",
     ) -> str:
         """Materialize a reference into a create_strategy_manual payload.
 
-        Called after search_reference_strategies + user pick. Copies the
-        reference's signals EXACTLY (parameters untouched) and only
-        rewrites each signal's timeframe if overridden. Returns a payload
-        the caller passes straight to create_strategy_manual.
+        Copies the reference's signals EXACTLY (names and params untouched).
+        `timeframe` and `asset` are free-to-override — reference strategies
+        are portable signal combos, not pins to a specific asset/TF. Bulk
+        pattern: loop over the top N references from search, build each
+        onto the user's target (asset, timeframe), backtest all, rank.
         """
         if not _require(api_key):
             return _auth_error()
@@ -1694,6 +1696,7 @@ def _register_strategy(server: FastMCP) -> None:
             payload = reference_strategies_service.build_from_reference(
                 reference_id=reference_id,
                 timeframe_override=timeframe,
+                asset_override=asset,
                 name=name,
             )
         except ValueError as e:
@@ -1703,15 +1706,18 @@ def _register_strategy(server: FastMCP) -> None:
     register_tool(ToolEntry(
         name="build_strategy_from_reference",
         description=(
-            "After search_reference_strategies returns candidates and the "
-            "user picks one, call this to produce a create_strategy_manual "
-            "payload. Signals and params are copied exactly — the agent "
-            "must NOT modify them. Only timeframe and name can be overridden."
+            "After search_reference_strategies returns candidates, call this "
+            "to produce a create_strategy_manual payload. Signals and params "
+            "are copied exactly — the agent must NOT modify them. `timeframe` "
+            "and `asset` are free overrides: a reference is a portable combo, "
+            "so retarget onto the user's asset/TF and bulk-backtest the top "
+            "matches rather than single-pick by label."
         ),
         access="auth",
         parameters=[
             ToolParam(name="reference_id", type="string", required=True, description="e.g. ref-001 — from search_reference_strategies"),
             ToolParam(name="timeframe", type="string", required=False, description="Override the reference's timeframe (canonicalized)"),
+            ToolParam(name="asset", type="string", required=False, description="Retarget onto a different asset — reference strategies are portable"),
             ToolParam(name="name", type="string", required=False, description="Optional strategy name override"),
             _APIKEY,
         ],

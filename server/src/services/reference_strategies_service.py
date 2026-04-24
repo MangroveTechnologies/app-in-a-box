@@ -185,14 +185,17 @@ def list_all() -> list[ReferenceStrategy]:
 def build_from_reference(
     reference_id: str,
     timeframe_override: str | None = None,
+    asset_override: str | None = None,
     name: str | None = None,
 ) -> dict[str, Any]:
     """Produce a create_strategy_manual-compatible payload from a reference.
 
-    Copies the reference's signals EXACTLY, only rewriting each signal's
-    `timeframe` field if `timeframe_override` is supplied (and canonicalizes
-    whatever it gets). Matches ai_copilot's build_strategy skill contract:
-    reference params are trusted; user only picks timeframe + name.
+    Copies the reference's signals EXACTLY; the caller can retarget the
+    payload onto a different asset (`asset_override`) or timeframe
+    (`timeframe_override`) — signal names and params do not change, only the
+    strategy's `asset` field and each signal's `timeframe` field. Reference
+    strategies are portable: a combo that worked on BTC 1h is a candidate
+    to bulk-backtest on any other asset or timeframe.
 
     Raises ValueError if reference_id is unknown.
     """
@@ -201,6 +204,7 @@ def build_from_reference(
         raise ValueError(f"reference_id {reference_id!r} not found")
 
     tf = timeframes.canonicalize_timeframe(timeframe_override or ref.timeframe)
+    asset = (asset_override or ref.asset).upper().strip()
 
     def _to_rule(sig: ReferenceSignal) -> dict[str, Any]:
         return {
@@ -221,7 +225,7 @@ def build_from_reference(
 
     return {
         "name": name or f"{ref.label} [from {ref.id}]",
-        "asset": ref.asset,
+        "asset": asset,
         "timeframe": tf,
         "entry": entry,
         "exit": exit_rules,

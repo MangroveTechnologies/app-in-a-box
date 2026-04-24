@@ -111,21 +111,28 @@ Then ask:
 Detailed authoring flow (reference-first, KB-grounded, autonomous fallback) lives in the **`/create-strategy` skill**. Load and follow that — it covers:
 
 - **Phase A** — `search_reference_strategies` first (always)
-- **Phase B** — `build_strategy_from_reference` when a reference matches (signals + params copied exactly)
+- **Phase B-bulk** — when 2+ references match, build all onto the user's (asset, timeframe) and bulk-backtest; rank by performance, not by label
+- **Phase B** — single build when exactly one reference matches
 - **Phase C** — custom build with required `kb_search` citation per signal (no library-default params)
 - **Phase D** — `create_strategy_autonomous` only when the user says "pick for me"
+
+Two invariants for Stage 2:
+
+1. **Reference strategies are portable.** The asset and timeframe on a reference record are provenance, not constraints. `build_strategy_from_reference` accepts `asset` + `timeframe` overrides — retarget freely and let the backtest decide.
+2. **Bulk-backtest beats label-pick.** When multiple references match, always build + backtest all of them before presenting a winner. Don't ask the user to pick a reference from names and descriptions; picking by label is a KB-grounding regression.
 
 Never default to Phase D as the first move.
 
 ## Stage 3 — Review backtest
 
-Detailed review flow (thresholds, PASS/FAIL decision rule, no-fabrication rule) lives in the `/create-strategy` skill's **Phase F**. Load and follow that.
+Detailed flow lives in the **`/backtest` skill**. Load and follow that — it covers window sizing (bar-count-driven, not months-per-timeframe), the threshold verdict, the benchmark-relative line, and failure-mode advice.
 
 High-level summary for orientation:
-- Present the winning strategy + 1–2 runners-up with signal names, KB citations, and metrics
-- Verdict against 6 thresholds from `server/src/services/data/threshold_spec.json` (sortino ≥ 1.5, sharpe ≥ 1.2, calmar ≥ 1.0, irr ≥ 0.15, max_drawdown ≤ 0.7, win_rate ≥ 0.25)
+- Window is picked from a bar-count target (~2000–5000 bars), not a fixed month table — keeps ratio metrics meaningful without bleeding across regimes
+- Verdict against 6 thresholds from `server/src/services/data/threshold_spec.json` (sortino ≥ 1.5, sharpe ≥ 1.2, calmar ≥ 1.0, irr ≥ 0.15, max_drawdown ≤ 0.7, win_rate ≥ 0.25), plus a benchmark-relative line (beat buy-and-hold? beat BTC?)
 - Never invent missing metrics — if `total_trades == 0`, report as INSUFFICIENT_TRADES
-- Ask: "Promote to paper, iterate the goal, or reject?"
+- Every non-PASS ships with failure-mode advice (which threshold failed → what to try)
+- Ask: "Promote to paper, iterate via /backtest, or reject?"
 
 ## Stage 4 — Paper
 

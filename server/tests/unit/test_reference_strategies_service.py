@@ -121,6 +121,24 @@ class TestBuildFromReference:
         for rule in payload["entry"]:
             assert rule["timeframe"] == "4h"
 
+    def test_asset_override_retargets_strategy(self):
+        """Reference strategies are portable combos — asset_override must
+        replace the strategy's asset field while leaving signal names and
+        params untouched. The retarget flow (BTC combo → user's AVAX goal)
+        depends on this."""
+        ref = svc.list_all()[0]
+        payload = svc.build_from_reference(reference_id=ref.id, asset_override="avax")
+        assert payload["asset"] == "AVAX", "asset_override must be normalized to upper"
+        # Signals must still be byte-identical to the reference.
+        for got, expected in zip(payload["entry"], ref.entry_signals):
+            assert got["name"] == expected.name
+            assert got["params"] == expected.params
+
+    def test_asset_override_absent_preserves_reference_asset(self):
+        ref = svc.list_all()[0]
+        payload = svc.build_from_reference(reference_id=ref.id)
+        assert payload["asset"] == ref.asset.upper()
+
     def test_unsupported_timeframe_rejected(self):
         ref = svc.list_all()[0]
         with pytest.raises(ValidationError):

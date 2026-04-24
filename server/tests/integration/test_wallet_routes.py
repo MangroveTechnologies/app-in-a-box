@@ -91,9 +91,9 @@ def test_create_wallet_happy_path(client):
     assert "seed_phrase" not in body
     assert "private_key" not in body
     assert _TEST_PRIVKEY not in r.text
-    # The response carries a secret_id that the CLI consumes via
+    # The response carries a vault_token that the CLI consumes via
     # /wallet/reveal-secret/{id}. Plaintext flows out-of-band, never via MCP.
-    assert body["secret_id"]
+    assert body["vault_token"]
     assert body["reveal_cmd"].startswith("./scripts/reveal-secret.sh ")
     assert body["backup_required"] is True
     assert body["secret_type"] in {"private_key", "mnemonic"}
@@ -109,15 +109,15 @@ def test_stash_then_import_flow(client):
         json={"secret": _TEST_PRIVKEY},
     )
     assert stash.status_code == 200
-    secret_id = stash.json()["secret_id"]
-    assert secret_id
+    vault_token = stash.json()["vault_token"]
+    assert vault_token
 
-    # Step 2: agent-equivalent — import_wallet with the secret_id.
+    # Step 2: agent-equivalent — import_wallet with the vault_token.
     imp = client.post(
         "/api/v1/agent/wallet/import",
         headers=_auth(),
         json={
-            "secret_id": secret_id,
+            "vault_token": vault_token,
             "chain": "evm",
             "network": "testnet",
             "chain_id": 84532,
@@ -131,13 +131,13 @@ def test_stash_then_import_flow(client):
 
 
 def test_reveal_secret_is_single_read(client):
-    # Create a wallet to get a valid secret_id.
+    # Create a wallet to get a valid vault_token.
     r = client.post(
         "/api/v1/agent/wallet/create",
         headers=_auth(),
         json={"chain": "evm", "network": "testnet", "chain_id": 84532},
     )
-    sid = r.json()["secret_id"]
+    sid = r.json()["vault_token"]
 
     # First reveal: 200 + plaintext.
     r1 = client.get(f"/api/v1/agent/wallet/reveal-secret/{sid}", headers=_auth())

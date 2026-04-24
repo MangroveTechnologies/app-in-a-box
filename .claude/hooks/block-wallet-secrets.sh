@@ -104,8 +104,8 @@ If this was you pasting a key, use the out-of-band flow instead:
   2. Run:  ./scripts/stash-secret.sh
   3. The script prompts for your key with input hidden (no echo).
      It stashes the key in an in-process vault on the agent and
-     prints a short secret_id.
-  4. Come back to this chat and tell me:  "import wallet secret_id <ID>"
+     prints a short vault_token.
+  4. Come back to this chat and tell me:  "import wallet vault_token <ID>"
      I'll call the import_wallet MCP tool with that id — the plaintext
      never touches this conversation.
 
@@ -113,7 +113,7 @@ To create a fresh wallet, just ask me to — no key needs to be typed.
 
 If this was a tool response that matched the pattern (defense-in-depth
 trip), inspect the tool's code and make sure it's not returning
-plaintext key material. Tool responses should carry a secret_id only;
+plaintext key material. Tool responses should carry a vault_token only;
 the plaintext should go through the SecretVault + reveal-secret.sh CLI.
 
 If this was a false positive (not a real key/mnemonic), rephrase to

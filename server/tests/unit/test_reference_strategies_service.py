@@ -140,6 +140,38 @@ class TestBuildFromReference:
         assert isinstance(payload["entry"], list)
         assert isinstance(payload["exit"], list)
 
+    def test_execution_config_includes_initial_balance(self):
+        """Regression: build_from_reference must produce a complete execution_config.
+
+        The reference JSON only stores per-strategy *overrides* (e.g.
+        max_risk_per_trade=0.008). The SDK's strategies.create endpoint
+        requires a full flat execution_config including initial_balance;
+        previously build_from_reference returned only the overrides and the
+        downstream create_strategy_manual call 500'd on the missing key.
+        """
+        ref = svc.list_all()[0]
+        payload = svc.build_from_reference(reference_id=ref.id)
+        exec_cfg = payload["execution_config"]
+        assert "initial_balance" in exec_cfg, (
+            "execution_config must carry initial_balance from trading_defaults.json"
+        )
+        assert exec_cfg["initial_balance"] > 0
+
+    def test_execution_config_merges_trading_defaults_under_reference_overrides(self):
+        """Reference overrides must win over trading_defaults.json; the rest fills from defaults."""
+        # ref-009 in the seed has max_risk_per_trade=0.008 (an override below the 0.01 default).
+        # After the merge, that override must be preserved.
+        ref = svc.get("ref-009")
+        if ref is None:
+            pytest.skip("ref-009 not present in seed")
+        payload = svc.build_from_reference(reference_id=ref.id)
+        exec_cfg = payload["execution_config"]
+        # Reference override wins:
+        assert exec_cfg["max_risk_per_trade"] == 0.008
+        # Default fills in missing fields:
+        assert exec_cfg.get("reward_factor") is not None
+        assert exec_cfg.get("atr_period") is not None
+
 
 class TestCategoryDetection:
     @pytest.mark.parametrize(

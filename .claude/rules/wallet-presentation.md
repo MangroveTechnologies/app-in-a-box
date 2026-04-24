@@ -6,8 +6,8 @@ These rules govern how the agent presents wallet operations. They apply to `crea
 
 After the phase-2 security rework, wallet secrets flow **out-of-band**. They never enter MCP tool responses, so they never enter Claude Code's conversation context.
 
-- `create_wallet` returns a `secret_id` (opaque, TTL-bound, single-read). The user runs `./scripts/reveal-secret.sh <secret_id>` in a terminal to see the plaintext.
-- `import_wallet` accepts a `secret_id` (obtained by the user running `./scripts/stash-secret.sh` first). It never accepts a raw key as an argument.
+- `create_wallet` returns a `vault_token` (opaque, TTL-bound, single-read). The user runs `./scripts/reveal-secret.sh <vault_token>` in a terminal to see the plaintext.
+- `import_wallet` accepts a `vault_token` (obtained by the user running `./scripts/stash-secret.sh` first). It never accepts a raw key as an argument.
 - Reveal-on-demand for existing wallets is via `./scripts/reveal-secret.sh --address <addr>`, also out-of-band.
 
 **If a user pastes a private key or mnemonic into chat**, `.claude/hooks/block-wallet-secrets.sh` will intercept and refuse the prompt. The hook returns a message directing them to `stash-secret.sh`. Do not try to work around this.
@@ -28,9 +28,9 @@ If the user asks for an alternative, proceed with the default but mention:
 
 ### NEVER
 
-- **Never** echo `secret_id` or any wallet secret in prose more than the one time you present the tool's response.
+- **Never** echo `vault_token` or any wallet secret in prose more than the one time you present the tool's response.
 - **Never** ask the user to paste a private key. If they want to import an existing wallet, direct them to `./scripts/stash-secret.sh`.
-- **Never** quote, screenshot, or "save" the secret_id after the user has run `reveal-secret.sh` — the vault entry is consumed on reveal; the id is useless afterward.
+- **Never** quote, screenshot, or "save" the vault_token after the user has run `reveal-secret.sh` — the vault entry is consumed on reveal; the id is useless afterward.
 
 ### ALWAYS
 
@@ -80,7 +80,7 @@ Where `{PLAIN_ENGLISH_MASTER_KEY_SOURCE}` maps from the tool's `master_key_sourc
 
 ## Presenting `import_wallet` output
 
-Only call `import_wallet` with a `secret_id` the user obtained from `stash-secret.sh`. If they paste a raw key, DO NOT CALL the tool with the key — the hook will block upstream, but also refuse semantically.
+Only call `import_wallet` with a `vault_token` the user obtained from `stash-secret.sh`. If they paste a raw key, DO NOT CALL the tool with the key — the hook will block upstream, but also refuse semantically.
 
 ### Template for `import_wallet`
 
@@ -93,7 +93,7 @@ Address:
 Block explorer: https://basescan.org/address/{ADDRESS}
 
 Your secret is already backed up (you just typed it into stash-secret.sh —
-that's what gave you the secret_id). The agent auto-confirmed the backup,
+that's what gave you the vault_token). The agent auto-confirmed the backup,
 so live trading is already unlocked for this wallet.
 
 Run get_balances to verify it's the wallet you expected.
@@ -115,7 +115,7 @@ integrated terminal works — Cmd+` / Ctrl+`) and run:
   ./scripts/stash-secret.sh
 
 It prompts for the key with input hidden (no echo) and prints a short
-secret_id. Come back here, tell me "import wallet secret_id <ID>", and
+vault_token. Come back here, tell me "import wallet vault_token <ID>", and
 I'll call the import_wallet tool with that id. Your key will never
 touch this conversation.
 ```

@@ -145,8 +145,8 @@ This is the moment the security primer lands — *right before* there's a key in
 Tell the user, in order:
 
 1. **Your keys stay on this machine.** The master key is in `./agent-data/master.key` (chmod 600) or your OS keychain — never sent anywhere.
-2. **Wallet secrets never enter this chat.** When you create a wallet, I return a `secret_id`. You run `./scripts/reveal-secret.sh <id>` in a terminal to back it up. The plaintext never touches Claude Code's transcript or Anthropic's API.
-3. **Imports work the same way in reverse.** To import an existing wallet, run `./scripts/stash-secret.sh` in a terminal first — it prompts with hidden input and gives you a secret_id to pass to me.
+2. **Wallet secrets never enter this chat.** When you create a wallet, I return a `vault_token`. You run `./scripts/reveal-secret.sh <id>` in a terminal to back it up. The plaintext never touches Claude Code's transcript or Anthropic's API.
+3. **Imports work the same way in reverse.** To import an existing wallet, run `./scripts/stash-secret.sh` in a terminal first — it prompts with hidden input and gives you a vault_token to pass to me.
 4. **Live trading is gated on backup confirmation.** After you save the secret, run `./scripts/confirm-backup.sh <address>` to unlock `execute_swap` and `live` strategy promotion for that wallet. Paper mode is unrestricted and wallet-free.
 5. **Paper first, always.** New strategies promote to `paper` (simulated fills). Only after you've reviewed evaluations do they go `live` with a real allocation.
 6. **Hooks block key pastes.** If you accidentally paste a key or mnemonic into chat, a hook will intercept and refuse — this is intentional, not a bug.
@@ -168,9 +168,9 @@ Branch on their answer:
 > ./scripts/stash-secret.sh
 > ```
 >
-> It'll prompt for your private key with input hidden and print a short `secret_id`. Come back here and tell me to import that id."
+> It'll prompt for your private key with input hidden and print a short `vault_token`. Come back here and tell me to import that id."
 
-Wait for the secret_id. Call `import_wallet(secret_id=...)`. Report per `wallet-presentation.md`.
+Wait for the vault_token. Call `import_wallet(vault_token=...)`. Report per `wallet-presentation.md`.
 
 **B — Create new:**
 Call `create_wallet()` with the defaults (`evm`, `mainnet`, `8453`, no label unless specified). Report per `wallet-presentation.md`, including the `reveal_cmd` as the backup step.
@@ -245,7 +245,7 @@ In that case: `get_swap_quote` → user confirm → `execute_swap`. The execute_
 
 - Never default to `get_swap_quote` / `execute_swap` without first attempting the strategy-driven flow.
 - Never call `update_strategy_status` to `live` without explicit user confirmation AND an allocation block AND `backup_confirmed_at` on the wallet.
-- Never accept a raw private key or mnemonic as an argument to any tool. `import_wallet` takes `secret_id` only.
+- Never accept a raw private key or mnemonic as an argument to any tool. `import_wallet` takes `vault_token` only.
 - Never ask the user to paste a private key into chat.
 - Never claim a signal is "firing" based on the signal-catalog listing alone; firing requires an actual `evaluate_strategy` call against current OHLCV.
 - Never recommend a strategy without showing backtest metrics from a real `backtest_strategy` or `create_strategy_autonomous` run.

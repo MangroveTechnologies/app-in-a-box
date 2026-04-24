@@ -118,8 +118,8 @@ def test_create_wallet_evm_persists_encrypted(temp_db, stub_keyring, mock_sdk_cr
 
     response = create_wallet(chain="evm", network="testnet", chain_id=84532, label="test")
     assert response.address == _TEST_ADDRESS
-    # The plaintext is NOT in the response — only a secret_id pointing at the vault.
-    assert response.secret_id and len(response.secret_id) >= 16
+    # The plaintext is NOT in the response — only a vault_token pointing at the vault.
+    assert response.vault_token and len(response.vault_token) >= 16
     assert response.secret_type == "private_key"
     assert response.master_key_source in {"keyfile", "keychain", "generated_keyfile"}
     assert response.reveal_cmd.startswith("./scripts/reveal-secret.sh ")
@@ -133,7 +133,7 @@ def test_create_wallet_evm_persists_encrypted(temp_db, stub_keyring, mock_sdk_cr
     assert "small test amount" in response.deposit_instructions.lower()
 
     # The vault must have the plaintext (so reveal-secret.sh can retrieve it).
-    plaintext = vault.reveal(response.secret_id)
+    plaintext = vault.reveal(response.vault_token)
     assert plaintext == _TEST_PRIVKEY
 
     row = get_connection().execute(
@@ -359,7 +359,7 @@ def test_stash_external_secret_then_import(temp_db, stub_keyring):
     sid = stash_external_secret(_TEST_PRIVKEY)
     assert sid
 
-    response = import_wallet(secret_id=sid, chain="evm", network="testnet", chain_id=84532)
+    response = import_wallet(vault_token=sid, chain="evm", network="testnet", chain_id=84532)
     assert response.address == _TEST_ADDRESS
     # Imported wallets auto-confirm backup (user typed the key into the CLI,
     # so they have it off-agent by definition).
@@ -372,12 +372,12 @@ def test_stash_external_secret_then_import(temp_db, stub_keyring):
     assert row["backup_confirmed_at"] is not None
 
 
-def test_import_wallet_expired_secret_id_raises(temp_db, stub_keyring):
+def test_import_wallet_expired_vault_token_raises(temp_db, stub_keyring):
     from src.services.wallet_manager import import_wallet
     from src.shared.errors import SigningError
 
     with pytest.raises(SigningError, match="unknown or has expired"):
-        import_wallet(secret_id="bogus-id-that-was-never-stashed")
+        import_wallet(vault_token="bogus-id-that-was-never-stashed")
 
 
 def test_reveal_wallet_secret_roundtrip(temp_db, stub_keyring, mock_sdk_create):

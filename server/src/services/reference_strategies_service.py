@@ -27,6 +27,7 @@ from src.shared.logging import get_logger
 _log = get_logger(__name__)
 
 _DATA_PATH = Path(__file__).parent / "data" / "reference_strategies.json"
+_DEFAULTS_PATH = Path(__file__).parent / "data" / "trading_defaults.json"
 
 
 class ReferenceSignal(BaseModel):
@@ -47,6 +48,34 @@ class ReferenceStrategy(BaseModel):
     execution_config: dict[str, Any]
     source: str
     notes: str = ""
+
+
+@lru_cache(maxsize=1)
+def _load_execution_defaults() -> dict[str, Any]:
+    """Flat execution_config defaults, merged from every group in trading_defaults.json.
+
+    Reference strategies in the seed JSON store only per-strategy *overrides*
+    (e.g. max_risk_per_trade=0.008). The upstream SDK's strategies.create
+    endpoint requires a full flat execution_config including fields like
+    initial_balance, reward_factor, atr_period, etc. This loader produces
+    that flat dict once per process.
+
+    Mechanism note: before this existed, build_from_reference returned only
+    the reference's override dict, and downstream create_strategy_manual
+    hit a 500 on the missing initial_balance key. The reference data is
+    intentionally sparse — the merge responsibility lives here.
+    """
+    if not _DEFAULTS_PATH.is_file():
+        _log.warning("trading_defaults.missing", path=str(_DEFAULTS_PATH))
+        return {}
+    raw = json.loads(_DEFAULTS_PATH.read_text())
+    flat: dict[str, Any] = {}
+    for key, group in raw.items():
+        if key == "description":
+            continue
+        if isinstance(group, dict):
+            flat.update(group)
+    return flat
 
 
 @lru_cache(maxsize=1)
@@ -184,12 +213,18 @@ def build_from_reference(
     entry = [_to_rule(s) for s in ref.entry_signals]
     exit_rules = [_to_rule(s) for s in ref.exit_signals]
 
+    # Flatten trading_defaults.json, then let the reference's overrides win.
+    # Keeps the reference data sparse (overrides only) while producing a
+    # payload the SDK will accept without extra patching by the caller.
+    exec_cfg = dict(_load_execution_defaults())
+    exec_cfg.update(dict(ref.execution_config))
+
     return {
         "name": name or f"{ref.label} [from {ref.id}]",
         "asset": ref.asset,
         "timeframe": tf,
         "entry": entry,
         "exit": exit_rules,
-        "execution_config": dict(ref.execution_config),
+        "execution_config": exec_cfg,
         "source_reference_id": ref.id,
     }

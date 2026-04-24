@@ -125,13 +125,14 @@ Never default to Phase D as the first move.
 
 ## Stage 3 — Review backtest
 
-Detailed review flow (thresholds, PASS/FAIL decision rule, no-fabrication rule) lives in the `/create-strategy` skill's **Phase F**. Load and follow that.
+Detailed flow lives in the **`/backtest` skill**. Load and follow that — it covers window sizing (bar-count-driven, not months-per-timeframe), the threshold verdict, the benchmark-relative line, and failure-mode advice.
 
 High-level summary for orientation:
-- Present the winning strategy + 1–2 runners-up with signal names, KB citations, and metrics
-- Verdict against 6 thresholds from `server/src/services/data/threshold_spec.json` (sortino ≥ 1.5, sharpe ≥ 1.2, calmar ≥ 1.0, irr ≥ 0.15, max_drawdown ≤ 0.7, win_rate ≥ 0.25)
+- Window is picked from a bar-count target (~2000–5000 bars), not a fixed month table — keeps ratio metrics meaningful without bleeding across regimes
+- Verdict against 6 thresholds from `server/src/services/data/threshold_spec.json` (sortino ≥ 1.5, sharpe ≥ 1.2, calmar ≥ 1.0, irr ≥ 0.15, max_drawdown ≤ 0.7, win_rate ≥ 0.25), plus a benchmark-relative line (beat buy-and-hold? beat BTC?)
 - Never invent missing metrics — if `total_trades == 0`, report as INSUFFICIENT_TRADES
-- Ask: "Promote to paper, iterate the goal, or reject?"
+- Every non-PASS ships with failure-mode advice (which threshold failed → what to try)
+- Ask: "Promote to paper, iterate via /backtest, or reject?"
 
 ## Stage 4 — Paper
 

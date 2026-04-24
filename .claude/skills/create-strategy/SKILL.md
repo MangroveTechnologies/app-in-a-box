@@ -170,56 +170,26 @@ Autonomous is the "I don't care, you decide" escape hatch. It's NOT the primary 
 
 Under no circumstances go straight to Phase D as the first move. Always try Phase A first.
 
-## Phase E — Backtest
+## Phase E — Hand off to /backtest
 
-Regardless of which phase built the strategy, hand off to backtesting immediately:
+Regardless of which phase built the strategy, hand off to the
+**`/backtest` skill** for the backtest + verdict + iteration flow. That
+skill owns window sizing (bar-count-driven, not months-per-timeframe),
+the threshold verdict, the benchmark-relative line, and failure-mode
+advice.
 
-```
-backtest_strategy(strategy_id, mode="full")
-```
+For Phase B-bulk: the bulk-backtest loop inside this skill still runs
+`backtest_strategy` per candidate with a shared window (so the ranked
+table is comparable). Size that shared window via the same bar-count
+table `/backtest` uses (2000–5000 bars target). Once the winner is
+picked, the user can invoke `/backtest` on the winner alone for deeper
+investigation (walk-forward, alternative windows).
 
-Omit `lookback_*` and date fields unless the user asked for a specific window — `backtest_service` picks a timeframe-aware default via `recommended_lookback_months(timeframe)`: 3 months for 5m/15m/30m/1h, 6 months for 4h, 12 months for 1d.
-
-Overrides go through the single `config` dict (matches `trading_defaults.json` keys). Example:
-```
-backtest_strategy(strategy_id, mode="full", lookback_hours=24, config={"slippage_pct": 0.002})
-```
-
-## Phase F — Review (PASS/FAIL against threshold_spec)
-
-Evaluate the backtest against 6 fixed thresholds from `server/src/services/data/threshold_spec.json` (copied verbatim from MangroveAI — `git diff` vs upstream is the drift check):
-
-| Metric | Threshold | Direction |
-|---|---|---|
-| `sortino_ratio` | ≥ 1.5 | higher is better |
-| `sharpe_ratio` | ≥ 1.2 | higher is better |
-| `calmar_ratio` | ≥ 1.0 | higher is better |
-| `irr_annualized` | ≥ 0.15 | higher is better |
-| `max_drawdown` | ≤ 0.7 | lower is better |
-| `win_rate` | ≥ 0.25 | higher is better |
-
-**Decision rule:**
-- **PASS** iff ALL six thresholds satisfied
-- **MARGINAL** if 4-5 of 6 satisfied (worth iterating; not ready for live)
-- **FAIL** if ≤ 3 of 6 satisfied (redesign or reject)
-
-### Present the verdict
-
-Always show the user:
-1. The verdict (PASS / MARGINAL / FAIL)
-2. Per-threshold breakdown — actual value vs threshold, ✓ or ✗ per row
-3. Next-step recommendation based on verdict:
-   - **PASS** → "Promote to paper (unrestricted) or live (requires allocation + backup confirmation). Which?"
-   - **MARGINAL** → "Iterate: widen backtest window, tweak params, or try a different reference. Want me to rerun with {specific change}?"
-   - **FAIL** → "This won't work as-is. Options: pick a different reference, change the goal, or accept it's not a viable strategy right now."
-
-### Never fabricate metrics
-
-If the `metrics` dict is missing, empty, or any field is null, **say so explicitly** — do not invent values. Quote the exact SDK response:
-
-> "The backtest response is missing `sharpe_ratio` — I can't verdict against the threshold. This usually means the SDK couldn't compute it (too few trades, or the data provider returned insufficient history). Options: rerun with a longer window, or check `resolved_window` in the response to confirm the window the server actually used."
-
-Likewise: if `total_trades == 0`, every ratio metric is meaningless (division by zero or undefined). Report it as **INSUFFICIENT_TRADES** — not PASS, not FAIL. Suggest widening the window or loosening signal filters.
+Do not duplicate the threshold table or verdict rules here — they live
+in `/backtest`. If this skill detects a PASS, tell the user the result
+and let them invoke `/promote-strategy` directly; if it detects a FAIL
+or MARGINAL, suggest `/backtest` for the iteration path rather than
+iterating in-place.
 
 ## Prohibited
 
@@ -260,7 +230,6 @@ User wants a strategy
 └─ Phase D: create_strategy_autonomous(goal, asset, timeframe)
         (server generates + backtests N candidates, returns winner)
 
-→ backtest_strategy (timeframe-aware default window)
-→ /review-backtest skill (PASS/FAIL verdict)
+→ /backtest skill (window sizing, verdict, iteration)
 → /promote-strategy skill (draft → paper → live)
 ```

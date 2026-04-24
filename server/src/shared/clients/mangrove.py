@@ -31,9 +31,21 @@ def mangroveai_client() -> MangroveAI:
 
     Reads MANGROVE_API_KEY from config. Environment (dev vs prod) is
     auto-detected by the SDK from the API key prefix (dev_* / prod_*).
+
+    The SDK's default request timeout is 30s, which is shorter than a
+    full backtest via Oracle's /api/v1/backtest (observed 52-76s during
+    Cloud Run cold-starts + multi-month lookback windows). We raise the
+    client-level timeout so long-running calls complete instead of
+    silently timing out at the agent/tool layer. Other endpoints
+    (kb_search, signals.list, get_ohlcv) normally return in <2s; the
+    higher ceiling only kicks in when something upstream is genuinely
+    slow.
     """
     config = _get_config()
-    return MangroveAI(api_key=str(config.MANGROVE_API_KEY))
+    return MangroveAI(
+        api_key=str(config.MANGROVE_API_KEY),
+        timeout=float(config.MANGROVE_SDK_TIMEOUT_SECONDS),
+    )
 
 
 @lru_cache(maxsize=1)

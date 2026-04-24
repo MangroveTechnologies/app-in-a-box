@@ -189,8 +189,8 @@ Live adds three guarantees over paper:
 | Review | agent uses `threshold_spec` values from `server/src/services/data/threshold_spec.json` |
 | Promote paper | `update_strategy_status(status="paper")` |
 | Watch paper | `list_evaluations`, `list_trades` |
-| Create wallet | `create_wallet` (secret returned via `secret_id` → `reveal-secret.sh`) |
-| Import wallet | `./scripts/stash-secret.sh` → `import_wallet(secret_id)` |
+| Create wallet | `create_wallet` (secret returned via `vault_token` → `reveal-secret.sh`) |
+| Import wallet | `./scripts/stash-secret.sh` → `import_wallet(vault_token)` |
 | Back up wallet | `./scripts/reveal-secret.sh --address <addr>` + `./scripts/confirm-backup.sh <addr>` — BOTH OUTSIDE MCP ON PURPOSE, keys never enter the transcript |
 | Fund wallet | user sends USDC to the address — external |
 | Go live | `update_strategy_status(status="live", confirm=true, allocation={...})` |

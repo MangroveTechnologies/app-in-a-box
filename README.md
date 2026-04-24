@@ -99,10 +99,10 @@ Start Claude Code in the repo directory. The agent auto-runs its first-run greet
 
 ### If you want a fresh wallet
 
-Just say "create a new wallet." The agent calls `create_wallet` with sane defaults (Base mainnet). The response carries a `secret_id` — NOT the plaintext key. The agent will tell you to run the backup command in your VSCode terminal:
+Just say "create a new wallet." The agent calls `create_wallet` with sane defaults (Base mainnet). The response carries a `vault_token` — NOT the plaintext key. The agent will tell you to run the backup command in your VSCode terminal:
 
 ```bash
-./scripts/reveal-secret.sh <secret_id>
+./scripts/reveal-secret.sh <vault_token>
 ```
 
 That prints your private key to **the terminal only** (never into the chat). Save it in a password manager / hardware wallet / paper, then tell the agent you've backed it up. The agent will run:
@@ -121,7 +121,7 @@ The agent will tell you to open your terminal and run:
 ./scripts/stash-secret.sh
 ```
 
-It prompts for your key with input hidden (no echo) and prints a short `secret_id`. Come back to Claude Code and say "import wallet secret_id X" — the agent calls `import_wallet` with that id. Your key never passes through the chat, the transcript, or Anthropic's API.
+It prompts for your key with input hidden (no echo) and prints a short `vault_token`. Come back to Claude Code and say "import wallet vault_token X" — the agent calls `import_wallet` with that id. Your key never passes through the chat, the transcript, or Anthropic's API.
 
 ### From there
 
@@ -139,7 +139,7 @@ Requires `backup_confirmed_at` on the wallet — the agent will refuse otherwise
 
 ## Safety model at a glance
 
-- **Your private keys never touch this chat.** `create_wallet` returns a `secret_id`, not the plaintext. Revealing is a separate CLI (`reveal-secret.sh`) that prints to your terminal only.
+- **Your private keys never touch this chat.** `create_wallet` returns a `vault_token`, not the plaintext. Revealing is a separate CLI (`reveal-secret.sh`) that prints to your terminal only.
 - **Harness hooks block key pastes.** If you try to paste a key into Claude Code, `.claude/hooks/block-wallet-secrets.sh` refuses the prompt with an educational message. The hook is in `.claude/settings.json` — disabling it requires a commit.
 - **Live trading is gated on explicit backup confirmation.** After you save a wallet's secret off-agent, `./scripts/confirm-backup.sh <addr>` flips a flag. `execute_swap` and `update_strategy_status → live` refuse on wallets without it.
 - **Master key stays local.** Bare-metal: OS keychain. Docker: `./agent-data/master.key` (chmod 600, gitignored).

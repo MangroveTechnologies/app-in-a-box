@@ -2,10 +2,10 @@
 # reveal-secret.sh — retrieve a wallet's plaintext secret OUT-OF-BAND.
 #
 # Two modes:
-#   1. By secret_id (freshly-created wallets):
-#        ./scripts/reveal-secret.sh <secret_id>
+#   1. By vault_token (freshly-created wallets):
+#        ./scripts/reveal-secret.sh <vault_token>
 #      Consumes the vault entry (single-read, TTL-bound). Use this right
-#      after `create_wallet` returns a secret_id.
+#      after `create_wallet` returns a vault_token.
 #
 #   2. By address (already-stored wallets):
 #        ./scripts/reveal-secret.sh --address <wallet-address>
@@ -15,7 +15,7 @@
 #
 # The secret is printed to THIS terminal only. It does not pass through
 # Claude Code or get logged anywhere beyond structured event logs
-# (which record only the address / secret_id, not the plaintext).
+# (which record only the address / vault_token, not the plaintext).
 #
 # After you copy it into a password manager / hardware wallet / paper,
 # clear your terminal scrollback if you care. The agent keeps no record
@@ -36,7 +36,7 @@ fail() { printf "${RED}  ✗${CLR} %s\n" "$1" >&2; exit 1; }
 usage() {
   cat >&2 <<EOF
 Usage:
-  $0 <secret_id>                  # reveal a stashed secret (single-read)
+  $0 <vault_token>                  # reveal a stashed secret (single-read)
   $0 --address <wallet-address>   # reveal an already-stored wallet secret
 EOF
   exit 2

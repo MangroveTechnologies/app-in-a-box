@@ -3,12 +3,12 @@
 Responsibilities:
 - Create wallets via mangrovemarkets.wallet.create(). Encrypt the returned
   seed/private_key with Fernet, persist the ciphertext in SQLite. Stash
-  the plaintext in the in-process SecretVault and return only a secret_id
+  the plaintext in the in-process SecretVault and return only a vault_token
   in the MCP response — the plaintext never enters the Claude Code
   conversation context.
 - Import externally-generated private keys via the stash-and-consume
   pattern: user's bash CLI posts the raw key to /internal/stash-secret
-  and gets back a secret_id, then calls import_wallet with that id.
+  and gets back a vault_token, then calls import_wallet with that id.
 - List stored wallets (addresses + metadata only; never returns secrets).
 - Sign arbitrary EVM transactions locally. The SDK never sees the key.
 - Gate live trading on explicit user backup confirmation (backup_confirmed_at).
@@ -16,7 +16,7 @@ Responsibilities:
 
 Security:
 - The plaintext key NEVER appears in an MCP tool response. Responses carry
-  only the opaque secret_id, which is useful only via the localhost reveal
+  only the opaque vault_token, which is useful only via the localhost reveal
   CLI (out-of-band, never through Claude Code).
 - sign() decrypts into a local bytes variable, derives the signing account,
   signs, discards the variable. Plaintext lifetime is <10ms per op.
@@ -62,7 +62,7 @@ SecretType = Literal["private_key", "mnemonic"]
 class WalletCreateResponse(BaseModel):
     """Response for POST /wallet/create.
 
-    The plaintext secret is NEVER included. The caller receives a secret_id
+    The plaintext secret is NEVER included. The caller receives a vault_token
     pointing at an in-process vault entry (TTL-bound, single-read) and a
     reveal_cmd describing how to retrieve the plaintext out-of-band.
     """
@@ -73,7 +73,7 @@ class WalletCreateResponse(BaseModel):
     chain_id: int | None = None
     label: str | None = None
     created_at: datetime
-    secret_id: str
+    vault_token: str
     secret_type: SecretType
     master_key_source: str
     reveal_cmd: str
@@ -100,7 +100,7 @@ class WalletImportResponse(BaseModel):
 class StashSecretResponse(BaseModel):
     """Response for POST /internal/stash-secret. Opaque id only."""
 
-    secret_id: str
+    vault_token: str
     secret_ttl_seconds: int
 
 
@@ -207,8 +207,8 @@ def _secret_vault_ttl() -> int:
         return 300
 
 
-def _reveal_cmd_for(secret_id: str) -> str:
-    return f"./scripts/reveal-secret.sh {secret_id}"
+def _reveal_cmd_for(vault_token: str) -> str:
+    return f"./scripts/reveal-secret.sh {vault_token}"
 
 
 def _reveal_cmd_for_address(address: str) -> str:
@@ -216,7 +216,7 @@ def _reveal_cmd_for_address(address: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Create wallet (secret stays in-process, MCP response has secret_id only)
+# Create wallet (secret stays in-process, MCP response has vault_token only)
 # ---------------------------------------------------------------------------
 
 
@@ -227,7 +227,7 @@ def create_wallet(
     label: str | None = None,
 ) -> WalletCreateResponse:
     """Create a new wallet. Encrypts the secret, persists to SQLite, stashes
-    plaintext in the in-process vault, returns a secret_id.
+    plaintext in the in-process vault, returns a vault_token.
     """
     chain_normalized = chain.lower()
     if chain_normalized in {"xrpl", "xrp"}:
@@ -275,7 +275,7 @@ def create_wallet(
     conn.commit()
 
     # Stash plaintext in vault. `secret` is not returned to the caller.
-    secret_id = vault.stash_for_address(secret, address=address)
+    vault_token = vault.stash_for_address(secret, address=address)
 
     _log.info(
         "wallet.created",
@@ -294,10 +294,10 @@ def create_wallet(
         chain_id=chain_id,
         label=label,
         created_at=created_at,
-        secret_id=secret_id,
+        vault_token=vault_token,
         secret_type=secret_type,
         master_key_source=get_master_key_source(),
-        reveal_cmd=_reveal_cmd_for(secret_id),
+        reveal_cmd=_reveal_cmd_for(vault_token),
         secret_ttl_seconds=_secret_vault_ttl(),
         backup_required=True,
         deposit_instructions=_deposit_instructions(address, chain_normalized, network),
@@ -306,12 +306,12 @@ def create_wallet(
 
 
 # ---------------------------------------------------------------------------
-# Import wallet (secret provided via stash_secret, consumed by secret_id)
+# Import wallet (secret provided via stash_secret, consumed by vault_token)
 # ---------------------------------------------------------------------------
 
 
 def import_wallet(
-    secret_id: str,
+    vault_token: str,
     chain: str = "evm",
     network: str = "mainnet",
     chain_id: int | None = 8453,
@@ -323,7 +323,7 @@ def import_wallet(
       1. Run `./scripts/stash-secret.sh` — it prompts for the private key via
          `read -s`, POSTs to /internal/stash-secret, prints the returned id.
       2. Ask the agent to import that id.
-      3. Agent calls import_wallet(secret_id=<id>).
+      3. Agent calls import_wallet(vault_token=<id>).
 
     The private key never enters Claude Code's conversation context.
     """
@@ -335,13 +335,13 @@ def import_wallet(
         )
 
     try:
-        secret = vault.reveal(secret_id)
+        secret = vault.reveal(vault_token)
     except KeyError as e:
         raise SigningError(
-            "secret_id is unknown or has expired.",
+            "vault_token is unknown or has expired.",
             suggestion=(
                 "Re-run `./scripts/stash-secret.sh` to stash your key and get a "
-                "fresh secret_id, then retry the import. Each secret_id is "
+                "fresh vault_token, then retry the import. Each vault_token is "
                 "single-read and TTL-bound."
             ),
         ) from e

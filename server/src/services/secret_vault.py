@@ -9,14 +9,14 @@ Why this exists:
     leaks to both transport and disk.
 
     SecretVault breaks that coupling: on wallet creation or import, the
-    agent stashes the plaintext in memory keyed by a random `secret_id` and
+    agent stashes the plaintext in memory keyed by a random `vault_token` and
     the MCP response carries ONLY the id. The user retrieves the plaintext
     out-of-band via a local bash/curl script that hits the localhost REST
     API — this subprocess never touches Claude's conversation context.
 
 Semantics:
-    - `stash(secret) -> secret_id`: store plaintext, return opaque id.
-    - `reveal(secret_id) -> secret`: return AND immediately evict. Single-read.
+    - `stash(secret) -> vault_token`: store plaintext, return opaque id.
+    - `reveal(vault_token) -> secret`: return AND immediately evict. Single-read.
     - TTL-bound: entries expire after `SECRET_VAULT_TTL_SECONDS` regardless
       of read. Sweep runs lazily on every stash/reveal + via a background
       task (started by the FastAPI lifespan hook).
@@ -92,10 +92,10 @@ class _Vault:
                 expires_at=now + _ttl(),
                 address=address,
             )
-        _log.info("secret_vault.stashed", secret_id=sid[:8] + "...", has_address=address is not None)
+        _log.info("secret_vault.stashed", vault_token=sid[:8] + "...", has_address=address is not None)
         return sid
 
-    def reveal(self, secret_id: str) -> str:
+    def reveal(self, vault_token: str) -> str:
         """Return the secret and evict the entry (single-read).
 
         Raises KeyError if the id is unknown or expired.
@@ -103,10 +103,10 @@ class _Vault:
         now = time.monotonic()
         with self._lock:
             self._sweep_locked(now)
-            entry = self._entries.pop(secret_id, None)
+            entry = self._entries.pop(vault_token, None)
         if entry is None:
-            raise KeyError(f"secret_id unknown or expired: {secret_id[:8]}...")
-        _log.info("secret_vault.revealed", secret_id=secret_id[:8] + "...")
+            raise KeyError(f"vault_token unknown or expired: {vault_token[:8]}...")
+        _log.info("secret_vault.revealed", vault_token=vault_token[:8] + "...")
         return entry.secret
 
     def stash_for_address(self, secret: str, address: str) -> str:

@@ -1,13 +1,13 @@
 """Wallet routes — auth-gated.
 
 - POST /api/v1/agent/wallet/create
-      Create + encrypt a wallet. Response carries secret_id (no plaintext).
+      Create + encrypt a wallet. Response carries vault_token (no plaintext).
 - POST /api/v1/agent/wallet/import
-      Import an existing wallet by secret_id (from a prior stash).
+      Import an existing wallet by vault_token (from a prior stash).
 - POST /api/v1/agent/wallet/stash-secret
       Accept a raw plaintext secret from the localhost CLI (not MCP).
-      Returns secret_id. Called by scripts/stash-secret.sh.
-- GET  /api/v1/agent/wallet/reveal-secret/{secret_id}
+      Returns vault_token. Called by scripts/stash-secret.sh.
+- GET  /api/v1/agent/wallet/reveal-secret/{vault_token}
       Reveal + consume a stashed secret. Called by scripts/reveal-secret.sh.
 - GET  /api/v1/agent/wallet/{address}/reveal
       Reveal-on-demand: decrypt a stored wallet's secret. Called by
@@ -65,7 +65,7 @@ class WalletCreateRequest(BaseModel):
 
 
 class WalletImportRequest(BaseModel):
-    secret_id: str = Field(..., description="From POST /wallet/stash-secret")
+    vault_token: str = Field(..., description="From POST /wallet/stash-secret")
     chain: str = "evm"
     network: str = "mainnet"
     chain_id: int | None = 8453
@@ -92,7 +92,7 @@ class ConfirmBackupResponse(BaseModel):
     summary="Create a new wallet (secret stashed, not returned)",
     description=(
         "Creates + encrypts a wallet locally. Response carries only a "
-        "secret_id pointing at the in-process vault — run the reveal_cmd "
+        "vault_token pointing at the in-process vault — run the reveal_cmd "
         "out-of-band to back up the plaintext. The MCP transport never "
         "sees the key."
     ),
@@ -110,7 +110,7 @@ async def wallet_create(req: WalletCreateRequest) -> WalletCreateResponse:
 @router.post(
     "/import",
     response_model=WalletImportResponse,
-    summary="Import an existing wallet by secret_id",
+    summary="Import an existing wallet by vault_token",
     description=(
         "Expects the secret to already be in the vault via a prior call to "
         "POST /wallet/stash-secret. This endpoint consumes the vault entry, "
@@ -120,7 +120,7 @@ async def wallet_create(req: WalletCreateRequest) -> WalletCreateResponse:
 )
 async def wallet_import(req: WalletImportRequest) -> WalletImportResponse:
     return import_wallet(
-        secret_id=req.secret_id,
+        vault_token=req.vault_token,
         chain=req.chain,
         network=req.network,
         chain_id=req.chain_id,
@@ -144,13 +144,13 @@ async def wallet_stash_secret(req: StashSecretRequest) -> StashSecretResponse:
     from src.config import app_config
     sid = stash_external_secret(req.secret, address_hint=req.address_hint)
     return StashSecretResponse(
-        secret_id=sid,
+        vault_token=sid,
         secret_ttl_seconds=int(getattr(app_config, "SECRET_VAULT_TTL_SECONDS", 300)),
     )
 
 
 @router.get(
-    "/reveal-secret/{secret_id}",
+    "/reveal-secret/{vault_token}",
     response_model=RevealSecretResponse,
     summary="Reveal + consume a stashed secret (single-read)",
     description=(
@@ -159,12 +159,12 @@ async def wallet_stash_secret(req: StashSecretRequest) -> StashSecretResponse:
         "called from an MCP tool."
     ),
 )
-async def wallet_reveal_secret(secret_id: str) -> RevealSecretResponse:
+async def wallet_reveal_secret(vault_token: str) -> RevealSecretResponse:
     try:
-        secret = vault.reveal(secret_id)
+        secret = vault.reveal(vault_token)
     except KeyError as e:
         raise SigningError(
-            "secret_id unknown or expired.",
+            "vault_token unknown or expired.",
             suggestion="Re-create or re-stash the secret to get a fresh id.",
         ) from e
     return RevealSecretResponse(secret=secret, address=None)

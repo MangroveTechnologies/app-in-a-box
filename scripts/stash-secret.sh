@@ -7,7 +7,7 @@
 #   2. It prompts for the key via `read -s` — no echo to the terminal.
 #   3. It POSTs the key to the agent's localhost REST endpoint.
 #   4. The agent stashes the key in an in-process vault (TTL ~300s,
-#      single-read) and returns an opaque `secret_id`.
+#      single-read) and returns an opaque `vault_token`.
 #   5. You tell the agent (in Claude Code) to import that id.
 #      The agent calls the `import_wallet` MCP tool, which consumes the
 #      id and stores the wallet.
@@ -101,17 +101,17 @@ PY
 SECRET=""
 unset SECRET
 
-SECRET_ID="$(printf '%s' "$RESPONSE" | python3 -c "import json, sys; print(json.loads(sys.stdin.read())['secret_id'])")"
+VAULT_TOKEN="$(printf '%s' "$RESPONSE" | python3 -c "import json, sys; print(json.loads(sys.stdin.read())['vault_token'])")"
 TTL="$(printf '%s' "$RESPONSE" | python3 -c "import json, sys; print(json.loads(sys.stdin.read())['secret_ttl_seconds'])")"
 
 ok "stashed"
-info "secret_id: $SECRET_ID"
+info "vault_token: $VAULT_TOKEN"
 info "expires in: ${TTL}s (single-read)"
 
 echo
 printf "${GREEN}Next:${CLR} in Claude Code, say:\n\n"
-echo "    Import my wallet with secret_id $SECRET_ID"
+echo "    Import my wallet with vault_token $VAULT_TOKEN"
 echo
-echo "The agent will call import_wallet(secret_id=$SECRET_ID). Your key"
+echo "The agent will call import_wallet(vault_token=$VAULT_TOKEN). Your key"
 echo "never enters the conversation or the transcript."
 echo

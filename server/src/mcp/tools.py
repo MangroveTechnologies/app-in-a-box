@@ -141,7 +141,7 @@ def _register_wallet(server: FastMCP) -> None:
 
         The plaintext secret is NEVER returned in this response — it would
         land in the Claude Code transcript and get sent to Anthropic. Instead
-        the response carries a `secret_id` referencing an in-process vault.
+        the response carries a `vault_token` referencing an in-process vault.
         Tell the user to run the `reveal_cmd` in a terminal to back up the
         secret. The id is TTL-bound (default 300s) and single-read.
         EVM only in v1. Base mainnet (chain_id 8453) is the default.
@@ -158,7 +158,7 @@ def _register_wallet(server: FastMCP) -> None:
     register_tool(ToolEntry(
         name="create_wallet",
         description=(
-            "Create + encrypt a wallet. Response carries only secret_id + "
+            "Create + encrypt a wallet. Response carries only vault_token + "
             "reveal_cmd — plaintext never enters the Claude Code transcript. "
             "EVM only in v1."
         ),
@@ -174,7 +174,7 @@ def _register_wallet(server: FastMCP) -> None:
 
     @server.tool()
     async def import_wallet(
-        secret_id: str,
+        vault_token: str,
         chain: str = "evm", network: str = "mainnet",
         chain_id: int | None = 8453, label: str | None = None,
         api_key: str = "",
@@ -183,7 +183,7 @@ def _register_wallet(server: FastMCP) -> None:
 
         The user's flow: run `./scripts/stash-secret.sh` in a terminal (it
         prompts for the private key via `read -s` so it isn't echoed, posts
-        to /internal/stash-secret, prints the returned secret_id). Then
+        to /internal/stash-secret, prints the returned vault_token). Then
         tell the agent to import that id. The private key NEVER enters
         Claude Code's conversation context — this tool only handles the id.
 
@@ -197,7 +197,7 @@ def _register_wallet(server: FastMCP) -> None:
         try:
             from src.services.wallet_manager import import_wallet as svc
             result = svc(
-                secret_id=secret_id,
+                vault_token=vault_token,
                 chain=chain, network=network,
                 chain_id=chain_id, label=label,
             )
@@ -208,13 +208,13 @@ def _register_wallet(server: FastMCP) -> None:
     register_tool(ToolEntry(
         name="import_wallet",
         description=(
-            "Import an existing wallet from a stashed secret_id. The user "
+            "Import an existing wallet from a stashed vault_token. The user "
             "must obtain the id by running scripts/stash-secret.sh in a "
             "terminal FIRST — this tool refuses raw keys by design."
         ),
         access="auth",
         parameters=[
-            ToolParam(name="secret_id", type="string", required=True, description="From scripts/stash-secret.sh output"),
+            ToolParam(name="vault_token", type="string", required=True, description="From scripts/stash-secret.sh output"),
             ToolParam(name="chain", type="string", required=False, description="evm (default)"),
             ToolParam(name="network", type="string", required=False, description="mainnet (default) | testnet"),
             ToolParam(name="chain_id", type="integer", required=False, description="Default 8453 (Base mainnet)"),

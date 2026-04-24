@@ -212,13 +212,13 @@ is sufficient for "does the bot work?"
 
 **Expect:**
 - Agent calls `create_wallet(chain="evm", network="mainnet", chain_id=8453)`
-- Response carries `address`, `secret_id`, `reveal_cmd`, `master_key_source`
+- Response carries `address`, `vault_token`, `reveal_cmd`, `master_key_source`
 - Agent surfaces the address + block explorer link + the `reveal_cmd`
 - **Agent does NOT echo the secret** (rule in `wallet-presentation.md`)
 
 **Verify:** In your terminal:
 ```bash
-./scripts/reveal-secret.sh <secret_id>
+./scripts/reveal-secret.sh <vault_token>
 ```
 The plaintext key appears ONCE in your terminal. Back it up anywhere
 you want (password manager, paper).
@@ -350,7 +350,7 @@ rm agent-data/agent.db
 - [ ] 2.1 Paper promotion registers cron
 - [ ] 2.2 Manual evaluate_strategy fires + logs
 - [ ] 2.3 Scheduler persists across restart
-- [ ] 3.1 create_wallet returns secret_id (no plaintext in chat)
+- [ ] 3.1 create_wallet returns vault_token (no plaintext in chat)
 - [ ] 3.2 confirm-backup.sh flips the flag
 - [ ] 3.3 Backup gate refuses unconfirmed live promotion
 - [ ] 4.1 Wallet receives USDC (external)

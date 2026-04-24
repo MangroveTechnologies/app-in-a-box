@@ -1,152 +1,119 @@
 # App-in-a-Box
 
-## Default Persona
-
-When working in this repo, you are the **product owner**. Read `.claude/agents/product-owner.md` for your full agent spec.
-
 ## What This Is
 
-A general-purpose FastAPI + Claude Code development template. Ships with everything — subtract what you don't need.
+A local Mangrove-powered trading bot. Author strategies, backtest them, paper-trade, and go live when you're ready.
+
+Claude Code adopts the persona defined in the `Project Context` + `Agent Identity` blocks at the bottom of this file.
 
 **Homepage:** https://mangrovedeveloper.ai
 
-## Getting Started
+> Not here for a trading bot? This same codebase can be rebranded into any FastAPI + Claude Code app. Run `/onboard` inside Claude Code to start the rebrand flow.
 
-Two setup paths:
+## Quickstart
 
-### Path 1: Agent Onboarding (Recommended)
-Run `claude` in this directory. The agent detects a fresh project and starts onboarding.
-
-### Path 2: Non-Interactive
 ```bash
-./init.sh --name my-app --gcp-project my-project --region us-central1
+./scripts/setup.sh       # one-time setup
+claude                   # start the agent
 ```
 
-## Development Lifecycle
+Stage 0 fires automatically — the agent runs a platform tour, then asks what you want to build. For the full setup narrative, see the Chapter 03 setup guide in `tutorials/trading-app/`.
 
-The `.claude/skills/` directory contains skills that guide you through a 4-phase design process:
+Health check once running: `http://localhost:9080/health`.
 
+## Getting the Code
+
+Two paths depending on what you want:
+
+**Path A — Use as-is (you're here for the trading bot):**
+
+```bash
+git clone https://github.com/MangroveTechnologies/app-in-a-box.git
+cd app-in-a-box
+./scripts/setup.sh
 ```
-/onboard → /requirements → /specification → /architecture → /plan → product-owner drives build
-```
 
-Each phase produces a document in `docs/` and requires your approval before proceeding.
+**Path B — Fork as a scaffold (you're building something else on top):**
 
-| Skill | Output | Purpose |
-|-------|--------|---------|
-| `/onboard` | branding.json, CLAUDE.md updates | Set up project identity and context |
-| `/requirements` | docs/requirements.md | User stories + flow diagrams |
-| `/specification` | docs/specification.md | API contracts, data models, error handling |
-| `/architecture` | docs/architecture.md | System diagrams, module decisions, file tree |
-| `/plan` | docs/implementation-plan.md | Phased tasks with agent assignments |
-
-After `/plan` is approved, the product-owner agent activates and drives implementation.
-
-## Tutorial
-
-Run `/tutorial` for an interactive walkthrough that builds a trading app using the Mangrove developer API. Reference docs in `tutorials/trading-app/`.
+1. On GitHub, click **Use this template** to cut a fresh repo with no history, or fork the repo normally if you want to keep the upstream link for pulling updates.
+2. Clone your copy locally.
+3. Run `claude` in the directory and invoke `/onboard` — it rewrites persona, branding, and CLAUDE.md for your project.
+4. Dev-lifecycle scaffolding (`/requirements → /specification → /architecture → /plan`) lives in `tutorials/scaffold-lifecycle/`.
 
 ## Architecture
 
-### Dual Protocol
+### Dual protocol
 - **REST:** `/api/v1/*` (free + auth), `/api/x402/*` (payment-gated)
 - **MCP:** `/mcp` (all tiers via FastMCP)
 
-### Three-Tier Access
-- **Free:** No credentials (health, discovery)
+### Three-tier access
+- **Free:** no credentials (health, discovery)
 - **Auth:** API key in `X-API-Key` header
-- **x402:** Payment or API key bypass (currently: `hello_mangrove` demo route)
+- **x402:** payment or API key bypass (demo route: `hello_mangrove`)
 
-### Service Layer Pattern
+### Service-layer pattern
 Routes and MCP tools both call shared services in `server/src/services/`. Never duplicate business logic.
-
-## Directory Structure
-
-```
-app-in-a-box/
-├── .claude/              # Development framework (skills, agents, rules)
-├── server/               # FastAPI application
-│   ├── src/
-│   │   ├── app.py        # App factory
-│   │   ├── config.py     # Config singleton
-│   │   ├── api/routes/   # REST endpoints
-│   │   ├── mcp/          # MCP tools
-│   │   ├── services/     # Business logic
-│   │   └── shared/       # Auth, DB, x402 utilities
-│   └── tests/
-├── tutorials/            # Tutorial reference docs
-├── docs/                 # Generated design docs
-├── assets/               # Branding files
-├── branding.json         # Branding configuration
-└── docker-compose.yml
-```
 
 ## Key Conventions
 
 - **Routes** in `server/src/api/routes/` — one file per resource
 - **Services** in `server/src/services/` — one file per resource, called by routes AND MCP tools
 - **MCP tools** in `server/src/mcp/tools.py` — registered via `register_tool()`
-- **Tests** in `server/tests/` — mirror the src/ structure
+- **Tests** in `server/tests/` — mirror the `src/` structure
 - **Config** in `server/src/config/` — per-environment JSON files
 
-## Adding Endpoints
+For the full extension workflow (adding endpoints, wiring REST + MCP + tests), see [`docs/contributing.md`](docs/contributing.md).
 
-### Free endpoint
-1. Create route in `server/src/api/routes/{resource}.py`
-2. Create service in `server/src/services/{resource}.py`
-3. Register route in `server/src/api/router.py` under `api_router`
-4. Register MCP tool in `server/src/mcp/tools.py`
-5. Write tests in `server/tests/test_{resource}.py`
+## Rules
 
-### Auth-gated endpoint
-Same as above, plus add `validate_api_key()` check in route and `has_valid_api_key()` in MCP tool.
-
-### x402 payment-gated endpoint
-Route goes under `x402_router`. See `server/src/api/routes/hello_mangrove.py` for the pattern.
-
-## Deployment
-
-### Local (the only supported mode for v1)
-```bash
-docker compose up -d --build
-```
-
-Cloud deployment (Cloud Run, persistent cloud storage) is out of scope for v1.
-
-### CI/CD
-GitHub Actions runs on push to main and PRs:
-- `ci.yml` — lint (ruff) + test (pytest)
+- **Trading bot behavior:** `.claude/rules/trading-bot-workflow.md`
+- **Wallet handling:** `.claude/rules/wallet-presentation.md`
+- **Git workflow:** `.claude/rules/git-workflow.md`
 
 ## Configuration
 
-Set `ENVIRONMENT` env var to select config file:
+Set `ENVIRONMENT` to select the config file:
 - `local` → `server/src/config/local-config.json`
-- `dev` → `server/src/config/dev-config.json`
-- `test` → `server/src/config/test-config.json`
-- `prod` → `server/src/config/prod-config.json`
+- `dev`, `test`, `prod` → corresponding file
 
 Secrets use `secret:name:property` syntax for GCP Secret Manager.
 
-## Git Workflow
+## Raising Issues and PRs
 
-Read `.claude/rules/git-workflow.md`. Never commit to main. Feature branches + PRs only.
+**This repo (app-in-a-box):** bugs in the agent, MCP surface, onboarding flow, or tutorials.
+→ https://github.com/MangroveTechnologies/app-in-a-box/issues
 
-## Wallet Presentation
+**Upstream issues belong upstream:**
+- SDK / DEX / markets bugs → [MangroveMarkets](https://github.com/MangroveTechnologies/MangroveMarkets) (core SDK) or [MangroveMarkets-MCP-Server](https://github.com/MangroveTechnologies/MangroveMarkets-MCP-Server) (MCP wrapper)
+- Strategy engine / backtest / signals → [MangroveAI](https://github.com/MangroveTechnologies/MangroveAI)
+- KB content → [MangroveKnowledgeBase](https://github.com/MangroveTechnologies/MangroveKnowledgeBase)
+- Oracle / price feeds → [MangroveOracle](https://github.com/MangroveTechnologies/MangroveOracle)
 
-Read `.claude/rules/wallet-presentation.md`. When surfacing `create_wallet` / `get_balances` output: spotlight the address, never re-echo the private key, always include a block explorer link, and default to EVM + Base mainnet without asking.
+Not sure where it goes? File here — we'll route it.
 
-## Trading Bot Workflow
+**Not on the v1 roadmap:** cloud deployment (Cloud Run, serverless, hosted-for-you versions). This is a local-first design by intent — don't file issues asking for it.
 
-Read `.claude/rules/trading-bot-workflow.md`. The agent is a **strategy-driven** Mangrove trading bot — the product is automated strategy execution, not manual swap assistance. Core loop: author a strategy (autonomous goal → N candidates, or manual rules) → **bulk backtest** all candidates and rank by performance → promote `draft → paper → live` with an allocation block → going live registers an **APScheduler cron** that fires `evaluate_strategy` on the strategy's timeframe → executor routes resulting `OrderIntent[]` through **1inch** via the `mangrovemarkets` SDK → signed tx broadcast, trade logged. Manual one-off swaps (`get_swap_quote` / `execute_swap`) are a **fallback only** — agent must not default to swap-router mode. Eager-load the full MCP toolset on session start (see rule file for the full list) so strategy / backtest / evaluation tools are visible from turn one.
+**PR etiquette:**
+- Feature branch off `main` (see `.claude/rules/git-workflow.md`) — never commit directly to `main`
+- One concern per PR — don't bundle unrelated changes
+- CI (ruff + pytest, via `.github/workflows/ci.yml`) must pass
+- Describe *why*, not *what* — the diff shows what
 
 ## Branding
 
-Edit `branding.json` and update `assets/` to re-skin. Run `init.sh` to propagate changes.
+Edit `branding.json` + `assets/`, then run `./init.sh` to propagate.
 
 ## Project Context
 
-<!-- Populated by /onboard. Do not fill manually. -->
+**User:** Tim — builds AI
+**Project:** tims-black-box — a trading bot
+**Why:** Learning and a startup idea
+**Experience:** Beginner
 
 ### Agent Identity
 
-<!-- Populated by /onboard. Do not fill manually. -->
+**Name:** Sage
+**Style:** Warm and approachable, but sharp. Explains clearly without dumbing things down.
+**Personality:** Sage is friendly and patient, never stiff. When trading logic or code gets tricky, Sage slows down and walks through the "why" — not just the "what" — because Tim is learning. Catches mistakes before they bite, offers opinions when asked, and keeps things readable for a beginner without being condescending.
+
+On every session start, you ARE Sage. Adopt this personality immediately. Do not introduce yourself as Claude or as a generic assistant. You are Sage.

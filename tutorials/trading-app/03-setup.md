@@ -173,41 +173,53 @@ claude
 ```
 
 Claude Code detects the `.mcp.json` and the local registration, loads
-the 41 tools, and the Stage 0 greeter fires automatically. You'll
-see something like:
+the 41 tools, and runs a **platform tour** automatically. The tour is
+a sequence of five live tool calls with one-sentence commentary each —
+the bot is showing you the product works before asking you to do
+anything. You'll see roughly:
 
-> Hey — I'm your local Mangrove-powered trading bot. I live entirely
-> on your machine — the strategy backend and knowledge base are
-> remote, but your keys, database, and agent process are all local.
+> Hey — I'm your local Mangrove-powered trading bot. The strategy
+> engine and knowledge base live in the cloud; your keys, database,
+> and agent process all live on this machine.
 >
-> Quick orientation before we touch anything:
+> *[calls `status`]*
+> The bot is alive. Version 0.1.0, DB at `./agent-data/agent.db`,
+> 0 active cron jobs.
 >
-> 1. Your keys stay on this machine. The master key lives in
->    `./agent-data/master.key` (chmod 600) or your OS keychain —
->    never sent anywhere.
-> 2. Wallet secrets never enter this chat. When we create a wallet,
->    I'll hand you a `secret_id` and you'll run
->    `./scripts/reveal-secret.sh <id>` in a terminal to back it up.
-> 3. Imports work the same way in reverse. Run
->    `./scripts/stash-secret.sh` in a terminal to import an existing
->    wallet.
-> 4. Live trading is gated on backup confirmation
->    (`./scripts/confirm-backup.sh <address>`). Paper mode is
->    unrestricted.
-> 5. Paper first, always. New strategies start in paper mode with
->    simulated fills.
-> 6. Hooks block key pastes. If you fat-finger a key into chat,
->    it'll be refused — that's intentional.
+> *[calls `list_tools`]*
+> Here's the capability surface: wallet tools, market data, swaps,
+> strategies, monitoring, knowledge base.
 >
-> Do you have an existing wallet you want to use, or should I create
-> a fresh one?
+> *[calls `get_market_data` on ETH]*
+> This is live ETH pricing from the Mangrove markets API — $X with
+> Y% 24h change. Every strategy I backtest runs against data like
+> this.
+>
+> *[calls `kb_search` on "MACD crossover"]*
+> This is the knowledge base. Every signal I use in a strategy
+> cites an entry here — no vibes-based suggestions.
+>
+> *[calls `search_reference_strategies` for ETH]*
+> And this is the reference library. When we build something, I
+> start from a template that's already been backtested.
+>
+> You can author, backtest, and paper-trade strategies without
+> connecting a wallet. Paper mode simulates fills at current
+> market price — nothing on-chain, no funds at risk. You only
+> need a wallet when you're ready to go live.
+>
+> Want me to build you a strategy? Tell me the asset and the vibe —
+> trend, mean reversion, breakout, momentum — or say "pick for me"
+> and I'll choose based on the reference library.
 
-**For now, say: "Skip the wallet for now — I want to try paper
-trading first."**
+**The key signal that tools loaded correctly: the tour runs.** Five
+tool calls, roughly six short paragraphs of commentary. If you see
+that, setup worked and you're ready for Chapter 04.
 
-The bot will acknowledge, and you're ready for Chapter 04. If the
-greeter doesn't fire — the bot just says "hey" without the orientation
-— see troubleshooting below.
+If the bot just says "hey" without the tour, or claims "the MCP
+server isn't connected," go to the troubleshooting section below.
+Wallet setup lives in Chapter 06 and only kicks in when you're ready
+for live trading — don't worry about it yet.
 
 ## Troubleshooting
 

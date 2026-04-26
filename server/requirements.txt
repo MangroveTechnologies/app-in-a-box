@@ -17,7 +17,7 @@ PyJWT>=2.9.0
 # transitively provides. A previous `mangrove-kb>=1.0.0` pin was
 # impossible to resolve (upstream tops out at 0.5.0) and blocked fresh
 # pip installs.
-mangroveai>=0.1.0,<0.2.0
+mangroveai>=0.3.0,<0.4.0
 mangrovemarkets>=0.1.2,<0.2.0
 apscheduler[sqlalchemy]>=3.10
 cryptography>=42

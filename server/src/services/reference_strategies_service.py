@@ -27,7 +27,6 @@ from src.shared.logging import get_logger
 _log = get_logger(__name__)
 
 _DATA_PATH = Path(__file__).parent / "data" / "reference_strategies.json"
-_DEFAULTS_PATH = Path(__file__).parent / "data" / "trading_defaults.json"
 
 
 class ReferenceSignal(BaseModel):
@@ -50,32 +49,28 @@ class ReferenceStrategy(BaseModel):
     notes: str = ""
 
 
-@lru_cache(maxsize=1)
 def _load_execution_defaults() -> dict[str, Any]:
-    """Flat execution_config defaults, merged from every group in trading_defaults.json.
+    """Flat execution_config defaults, merged from canon trading_defaults.
 
     Reference strategies in the seed JSON store only per-strategy *overrides*
     (e.g. max_risk_per_trade=0.008). The upstream SDK's strategies.create
     endpoint requires a full flat execution_config including fields like
     initial_balance, reward_factor, atr_period, etc. This loader produces
-    that flat dict once per process.
+    that flat dict.
+
+    Single-source via backtest_service.flattened_defaults() — fetched from
+    the public canon endpoint with offline-startup fallback. See
+    backtest_service for the lazy-cache + fallback semantics.
 
     Mechanism note: before this existed, build_from_reference returned only
     the reference's override dict, and downstream create_strategy_manual
     hit a 500 on the missing initial_balance key. The reference data is
     intentionally sparse — the merge responsibility lives here.
     """
-    if not _DEFAULTS_PATH.is_file():
-        _log.warning("trading_defaults.missing", path=str(_DEFAULTS_PATH))
-        return {}
-    raw = json.loads(_DEFAULTS_PATH.read_text())
-    flat: dict[str, Any] = {}
-    for key, group in raw.items():
-        if key == "description":
-            continue
-        if isinstance(group, dict):
-            flat.update(group)
-    return flat
+    # Local import avoids circular: backtest_service imports nothing from
+    # reference_strategies_service; this is the only direction.
+    from src.services.backtest_service import flattened_defaults
+    return flattened_defaults()
 
 
 @lru_cache(maxsize=1)

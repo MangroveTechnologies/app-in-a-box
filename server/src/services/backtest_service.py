@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
 from mangroveai.models import BacktestRequest
@@ -35,27 +34,130 @@ _log = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Canonical trading defaults — copied verbatim from MangroveAI.
+# Canonical trading defaults — fetched from MangroveAI's free public API.
 #
-# Source: MangroveAI/domains/ai_copilot/prompts/trading_defaults.json
-# Loaded the way MangroveAI/domains/strategies/services.py does:
-# flatten risk_management + position_limits + volatility_settings +
-# trading_rules + time_based_exits into a single dict.
+# Endpoint: GET https://api.mangrovedeveloper.ai/api/v1/config/trading-defaults
+# (no auth required — public configuration). Wrapped by the mangroveai SDK as
+# `client.config.trading_defaults()` (mangroveai >= 0.3.0).
 #
-# The SDK's BacktestRequest declares 13 fields as required (pydantic
-# PydanticUndefined default) despite the server applying trading_defaults
-# fallback on its own. Until MangroveAI issue #437 lands (make those 10
-# duplicate-forcing fields Optional), every client has to supply the
-# values. We read from our copy of the upstream JSON so the values stay
-# in sync — `git diff server/src/services/data/trading_defaults.json`
-# against the upstream file is the drift check.
+# Replaces the previous local copy at server/src/services/data/
+# trading_defaults.json which silently drifted from canon. Lazy + cached
+# for the process lifetime: first call hits the API, all subsequent calls
+# return the cached dict. If the API is unreachable (offline dev, local-
+# only run, etc.), we fall back to a hardcoded v3.5.0 snapshot so server
+# startup doesn't crash.
+#
+# To pick up canon updates, restart the server after the API returns the
+# new values. `mcp__defi-agent__status` and `/api/v1/agent/status` both
+# show which version the cache holds.
 # ---------------------------------------------------------------------------
 
-_DATA_DIR = Path(__file__).parent / "data"
-_TRADING_DEFAULTS_PATH = _DATA_DIR / "trading_defaults.json"
+# Hardcoded fallback canon — used ONLY if the SDK fetch fails. Mirrors
+# MangroveAI v3.5.0's trading_defaults.json (commit 89d6713). Refresh when
+# the canon shape changes (rare); values here are functionally safe so a
+# fallback-using server still produces sane backtests until reconnected.
+_FALLBACK_TRADING_DEFAULTS: dict[str, Any] = {
+    "description": "Hardcoded fallback (v3.5.0 snapshot) — used only when SDK fetch from /api/v1/config/trading-defaults fails.",
+    "signal_defaults": {},
+    "backtest_defaults": {"slippage_pct": 0.004, "fee_pct": 0.0085},
+    "risk_management": {
+        "max_risk_per_trade": 0.01,
+        "reward_factor": 2,
+        "atr_period": 14,
+        "atr_volatility_factor": 2.0,
+        "atr_short_weight": 0.95,
+        "atr_long_weight": 0.05,
+        "atr_cap_multiplier": 2.1,
+    },
+    "position_limits": {
+        "initial_balance": 10000,
+        "min_balance_threshold": 0.1,
+        "min_trade_amount": 25,
+        "max_open_positions": 10,
+        "max_trades_per_day": 50,
+        "max_units_per_trade": 1000000,
+        "max_trade_amount": 10000000,
+    },
+    "volatility_settings": {
+        "volatility_window": 24,
+        "target_volatility": 0.1,
+        "volatility_mode": "stddev",
+        "enable_volatility_adjustment": False,
+    },
+    "trading_rules": {
+        "cooldown_bars": 24,
+        "daily_momentum_limit": 3,
+        "weekly_momentum_limit": 3,
+        "cooldown_config": {
+            "5m":  {"short_loss_limit": 4, "long_loss_limit": 6, "short_window_bars": 180, "long_window_bars": 480},
+            "15m": {"short_loss_limit": 4, "long_loss_limit": 6, "short_window_bars": 120, "long_window_bars": 320},
+            "1h":  {"short_loss_limit": 4, "long_loss_limit": 6, "short_window_bars": 48,  "long_window_bars": 144},
+            "1d":  {"short_loss_limit": 4, "long_loss_limit": 6, "short_window_bars": 20,  "long_window_bars": 60},
+        },
+    },
+    "time_based_exits": {
+        "max_hold_bars": 1000,
+        "exit_on_loss_after_bars": 1000,
+        "exit_on_profit_after_bars": 1000,
+        "profit_threshold_pct": 0.05,
+    },
+}
 
-with _TRADING_DEFAULTS_PATH.open() as _f:
-    TRADING_DEFAULTS: dict[str, Any] = json.load(_f)
+_cached_trading_defaults: dict[str, Any] | None = None
+
+
+def _get_trading_defaults() -> dict[str, Any]:
+    """Fetch canon from MangroveAI's free public /api/v1/config/trading-defaults.
+
+    Cached for the process lifetime after first successful fetch. Falls
+    back to the hardcoded snapshot above on ANY of these failure modes:
+      - mangroveai_client() raises (config not loaded, etc.)
+      - .config attribute missing (older SDK without ConfigService — pre-0.3.0)
+      - .trading_defaults() raises (network down, 5xx, etc.)
+      - .trading_defaults() returns empty/non-dict/missing-required-sections
+        (envelope-changed unexpectedly, partial response, etc.)
+
+    Restart the server once API connectivity is restored to pick up
+    canon updates — this function does not auto-retry.
+    """
+    global _cached_trading_defaults
+    if _cached_trading_defaults is not None:
+        return _cached_trading_defaults
+
+    # Required top-level sections — used to validate the API response.
+    # If any are missing, treat as a malformed fetch and fall back.
+    _REQUIRED_SECTIONS = ("risk_management", "position_limits", "trading_rules")
+
+    fetched: dict[str, Any] | None = None
+    try:
+        client = mangroveai_client()
+        config_svc = getattr(client, "config", None)
+        if config_svc is None:
+            raise AttributeError("mangroveai client has no `config` service (need SDK >= 0.3.0)")
+        fetched = config_svc.trading_defaults()
+    except Exception as e:  # noqa: BLE001 — SDK / network / config errors all fall back
+        _log.warning(
+            "trading_defaults.fetch_failed",
+            error=f"{type(e).__name__}: {e}",
+            note="using hardcoded v3.5.0 fallback snapshot",
+        )
+        _cached_trading_defaults = _FALLBACK_TRADING_DEFAULTS
+        return _cached_trading_defaults
+
+    # Defensive shape check — empty/non-dict/missing sections all fall back.
+    if not isinstance(fetched, dict) or not all(s in fetched for s in _REQUIRED_SECTIONS):
+        _log.warning(
+            "trading_defaults.fetch_malformed",
+            type=type(fetched).__name__,
+            keys=list(fetched.keys()) if isinstance(fetched, dict) else None,
+            note="using hardcoded v3.5.0 fallback snapshot",
+        )
+        _cached_trading_defaults = _FALLBACK_TRADING_DEFAULTS
+        return _cached_trading_defaults
+
+    _log.info("trading_defaults.loaded_from_api", sections=list(fetched.keys()))
+    _cached_trading_defaults = fetched
+    return _cached_trading_defaults
 
 
 def flattened_defaults() -> dict[str, Any]:
@@ -65,6 +167,7 @@ def flattened_defaults() -> dict[str, Any]:
     sections in the same order, so a config override that works against
     the upstream copilot works identically here.
     """
+    canon = _get_trading_defaults()
     out: dict[str, Any] = {}
     for section in (
         "risk_management",
@@ -73,7 +176,7 @@ def flattened_defaults() -> dict[str, Any]:
         "trading_rules",
         "time_based_exits",
     ):
-        section_data = TRADING_DEFAULTS.get(section) or {}
+        section_data = canon.get(section) or {}
         out.update(section_data)
     return out
 
@@ -81,11 +184,11 @@ def flattened_defaults() -> dict[str, Any]:
 def backtest_cost_defaults() -> dict[str, Any]:
     """Return the slippage_pct / fee_pct defaults.
 
-    These live under `backtest_defaults` in the upstream JSON (separate
-    from the execution config sections) so they need a dedicated
-    accessor when a caller wants to surface them.
+    These live under `backtest_defaults` in the canon (separate from the
+    execution config sections) so they need a dedicated accessor when a
+    caller wants to surface them.
     """
-    return dict(TRADING_DEFAULTS.get("backtest_defaults") or {})
+    return dict(_get_trading_defaults().get("backtest_defaults") or {})
 
 
 def _resolve_window(

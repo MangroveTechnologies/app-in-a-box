@@ -71,3 +71,7 @@ agent-data/
 **/agent-data-test/
 
 server/scripts/first_live_swap.py
+
+# Slide-source pptx — bulky binary; the rendered .pdf is the committed artifact.
+# If you need to commit a specific pptx, use git add -f.
+*.pptx
